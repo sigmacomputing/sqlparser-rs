@@ -319,6 +319,14 @@ pub enum TableFactor {
     /// https://docs.snowflake.com/en/sql-reference/constructs/pivot.html
     Pivot {
         expr: Expr,
+        alias: Option<TableAlias>,
+        val: Ident,
+        pivot_vals: Vec<Expr>,
+    },
+    /// https://docs.snowflake.com/en/sql-reference/constructs/unpivot.html
+    Unpivot {
+        expr: Expr,
+        alias: Option<TableAlias>,
         val: Ident,
         pivot_vals: Vec<Expr>,
     },
@@ -389,6 +397,7 @@ impl fmt::Display for TableFactor {
             }
             TableFactor::Pivot {
                 expr,
+                alias,
                 val,
                 pivot_vals,
             } => {
@@ -398,7 +407,29 @@ impl fmt::Display for TableFactor {
                     write!(f, "{}{}", delim, pivot_val)?;
                     delim = ", ";
                 }
-                write!(f, "))")
+                write!(f, "))")?;
+                if let Some(alias) = alias {
+                    write!(f, " AS {}", alias)?;
+                }
+                Ok(())
+            }
+            TableFactor::Unpivot {
+                expr,
+                alias,
+                val,
+                pivot_vals,
+            } => {
+                write!(f, "({} FOR {} IN (", expr, val)?;
+                let mut delim = "";
+                for pivot_val in pivot_vals {
+                    write!(f, "{}{}", delim, pivot_val)?;
+                    delim = ", ";
+                }
+                write!(f, "))")?;
+                if let Some(alias) = alias {
+                    write!(f, " AS {}", alias)?;
+                }
+                Ok(())
             }
             TableFactor::NestedJoin(table_reference) => write!(f, "({})", table_reference),
         }
