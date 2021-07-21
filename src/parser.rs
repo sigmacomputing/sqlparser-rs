@@ -1920,12 +1920,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_number_value(&mut self) -> Result<Value, ParserError> {
-        match self.parse_value()? {
-            v @ Value::Number(_) => Ok(v),
+    // XXX(don): this used to only succeed if we found a number value, but due to https://sigmacomputing.atlassian.net/browse/SIG-13647 I've updated it to allow idents as well.
+    pub fn parse_number_value_or_ident(&mut self) -> Result<Expr, ParserError> {
+        match self.parse_expr()? {
+            e @ Expr::Value(Value::Number(_)) => Ok(e),
+            e @ Expr::Identifier(_) => Ok(e),
             _ => {
                 self.prev_token();
-                self.expected("literal number", self.peek_token())
+                self.expected("literal number or ident", self.peek_token())
             }
         }
     }
@@ -2952,7 +2954,7 @@ impl<'a> Parser<'a> {
             self.expect_token(&Token::RParen)?;
             Some(quantity)
         } else {
-            Some(Expr::Value(self.parse_number_value()?))
+            Some(self.parse_number_value_or_ident()?)
         };
 
         let percent = self.parse_keyword(Keyword::PERCENT);
@@ -2971,13 +2973,13 @@ impl<'a> Parser<'a> {
         if self.parse_keyword(Keyword::ALL) {
             Ok(None)
         } else {
-            Ok(Some(Expr::Value(self.parse_number_value()?)))
+            Ok(Some(self.parse_number_value_or_ident()?))
         }
     }
 
     /// Parse an OFFSET clause
     pub fn parse_offset(&mut self) -> Result<Offset, ParserError> {
-        let value = Expr::Value(self.parse_number_value()?);
+        let value = self.parse_number_value_or_ident()?;
         let rows = if self.parse_keyword(Keyword::ROW) {
             OffsetRows::Row
         } else if self.parse_keyword(Keyword::ROWS) {
