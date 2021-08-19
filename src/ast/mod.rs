@@ -164,7 +164,7 @@ pub enum Expr {
     /// `IS [NOT] { NULL | FALSE | TRUE | UNKNOWN }` expression
     Is {
         expr: Box<Expr>,
-        check: &'static str,
+        check: IsCheck,
         negated: bool,
     },
     InList {
@@ -462,6 +462,27 @@ impl fmt::Display for Expr {
             Expr::Subquery(s) => write!(f, "({})", s),
             Expr::ListAgg(listagg) => write!(f, "{}", listagg),
             Expr::Struct(strct) => write!(f, "{}", strct),
+        }
+    }
+}
+
+/// An enum for Is Expr
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum IsCheck {
+    NULL,
+    FALSE,
+    TRUE,
+    UNKNOWN
+}
+
+impl fmt::Display for IsCheck{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            IsCheck::NULL => write!(f, "NULL"),
+            IsCheck::NULL => write!(f, "FALSE"),
+            IsCheck::NULL => write!(f, "TRUE"),
+            IsCheck::NULL => write!(f, "UNKNOWN"),
         }
     }
 }

@@ -938,10 +938,10 @@ impl<'a> Parser<'a> {
                 Keyword::IS => {
                     let negated = self.parse_keyword(Keyword::NOT);
                     let check = match self.next_token() {
-                        Token::Word(w) if w.keyword == Keyword::NULL => "NULL",
-                        Token::Word(w) if w.keyword == Keyword::FALSE => "FALSE",
-                        Token::Word(w) if w.keyword == Keyword::TRUE => "TRUE",
-                        Token::Word(w) if w.keyword == Keyword::UNKNOWN => "UNKNOWN",
+                        Token::Word(w) if w.keyword == Keyword::NULL => IsCheck::NULL,
+                        Token::Word(w) if w.keyword == Keyword::FALSE => IsCheck::FALSE,
+                        Token::Word(w) if w.keyword == Keyword::TRUE => IsCheck::TRUE,
+                        Token::Word(w) if w.keyword == Keyword::UNKNOWN => IsCheck::UNKNOWN,
                         unexpected => {
                             return self.expected("NULL, FALSE, TRUE, or UNKNOWN", unexpected)
                         }
