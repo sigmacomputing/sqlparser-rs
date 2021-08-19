@@ -490,6 +490,7 @@ impl fmt::Display for IsCheck{
 /// A window specification, either inline or named
 /// https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_clause
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum WindowSpec {
     Inline(InlineWindowSpec),
     Named(Ident),
