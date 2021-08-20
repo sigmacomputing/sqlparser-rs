@@ -232,7 +232,7 @@ fn parse_limit_is_not_an_alias() {
 fn parse_select_distinct() {
     let sql = "SELECT DISTINCT name FROM customer";
     let select = verified_only_select(sql);
-    assert_eq!(true, select.distinct);
+    assert!(select.distinct);
     assert_eq!(
         &SelectItem::UnnamedExpr(Expr::Identifier(Ident::new("name"))),
         only(&select.projection)
@@ -1206,12 +1206,9 @@ fn parse_assert_message() {
     match ast {
         Statement::Assert {
             condition: _condition,
-            message: Some(message),
+            message: Some(Expr::Value::SingleQuotedString(s)),
         } => {
-            match message {
-                Expr::Value(Value::SingleQuotedString(s)) => assert_eq!(s, "No rows in my_table"),
-                _ => unreachable!(),
-            };
+            assert_eq!(s, "No rows in my_table"),
         }
         _ => unreachable!(),
     }
@@ -1582,8 +1579,8 @@ fn parse_alter_table_drop_column() {
             } => {
                 assert_eq!("tab", name.to_string());
                 assert_eq!("is_active", column_name.to_string());
-                assert_eq!(true, if_exists);
-                assert_eq!(true, cascade);
+                assert!(if_exists);
+                assert!(cascade);
             }
             _ => unreachable!(),
         }
@@ -2818,13 +2815,13 @@ fn parse_drop_table() {
             names,
             cascade,
         } => {
-            assert_eq!(true, if_exists);
+            assert!(if_exists);
             assert_eq!(ObjectType::Table, object_type);
             assert_eq!(
                 vec!["foo", "bar"],
                 names.iter().map(ToString::to_string).collect::<Vec<_>>()
             );
-            assert_eq!(true, cascade);
+            assert!(cascade);
         }
         _ => unreachable!(),
     }
@@ -3259,8 +3256,8 @@ fn parse_create_index() {
             assert_eq!("idx_name", name.to_string());
             assert_eq!("test", table_name.to_string());
             assert_eq!(indexed_columns, columns);
-            assert_eq!(true, unique);
-            assert_eq!(true, if_not_exists)
+            assert!(unique);
+            assert!(if_not_exists)
         }
         _ => unreachable!(),
     }
