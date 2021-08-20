@@ -110,7 +110,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a SQL statement and produce an Abstract Syntax Tree (AST)
     pub fn parse_sql(dialect: &dyn Dialect, sql: &str) -> Result<Vec<Statement>, ParserError> {
-        let mut tokenizer = Tokenizer::new(dialect, &sql);
+        let mut tokenizer = Tokenizer::new(dialect, sql);
         let tokens = tokenizer.tokenize()?;
         let mut parser = Parser::new(tokens, dialect);
         let mut stmts = Vec::new();
@@ -275,7 +275,7 @@ impl<'a> Parser<'a> {
                 _ => self.parse_ident(w.to_ident()),
             }, // End of Token::Word
             Token::BacktickQuotedString(w) => self.parse_ident(Ident {
-                value: w.clone(),
+                value: w,
                 quote_style: Some('`'),
             }),
             Token::DoubleQuotedString(s) => Ok(Expr::Value(Value::DoubleQuotedString(s))),
@@ -429,7 +429,7 @@ impl<'a> Parser<'a> {
         let ident = self.parse_identifier()?;
         self.expect_keyword(Keyword::AS)?;
         let spec = self.parse_window_spec()?;
-        return Ok((ident, spec));
+        Ok((ident, spec))
     }
 
     pub fn parse_window_spec(&mut self) -> Result<WindowSpec, ParserError> {
@@ -737,7 +737,7 @@ impl<'a> Parser<'a> {
                 Keyword::EPOCH => Ok(DateTimeField::Epoch),
                 _ => self.expected("date/time field", Token::Word(w))?,
             },
-            Token::SingleQuotedString(w) => Ok(DateTimeField::Literal(w.clone())),
+            Token::SingleQuotedString(w) => Ok(DateTimeField::Literal(w)),
             unexpected => self.expected("date/time field", unexpected),
         }
     }
@@ -2840,13 +2840,13 @@ impl<'a> Parser<'a> {
         args_res: FunctionArgsRes,
     ) -> Result<Vec<FunctionArg>, ParserError> {
         if args_res.ignore_respect_nulls.is_some() {
-            return parser_err!(self, format!("Unexpected IGNORE|RESPECT NULLS clause"));
-        } else if args_res.order_by.len() > 0 {
-            return parser_err!(self, format!("Unexpected ORDER BY clause"));
+            return parser_err!(self, "Unexpected IGNORE|RESPECT NULLS clause".to_string());
+        } else if !args_res.order_by.is_empty() {
+            return parser_err!(self, "Unexpected ORDER BY clause".to_string());
         } else if args_res.limit.is_some() {
-            return parser_err!(self, format!("Unexpected LIMIT clause"));
+            return parser_err!(self, "Unexpected LIMIT clause".to_string());
         }
-        return Ok(args_res.args);
+        Ok(args_res.args)
     }
 
     pub fn parse_optional_args(&mut self) -> Result<FunctionArgsRes, ParserError> {
