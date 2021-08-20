@@ -212,7 +212,7 @@ fn parse_top_level() {
 fn parse_simple_select() {
     let sql = "SELECT id, fname, lname FROM customer WHERE id = 1 LIMIT 5";
     let select = verified_only_select(sql);
-    assert_eq!(false, select.distinct);
+    assert!(!select.distinct);
     assert_eq!(3, select.projection.len());
     let select = verified_query(sql);
     assert_eq!(Some(Expr::Value(number("5"))), select.limit);
@@ -1206,9 +1206,9 @@ fn parse_assert_message() {
     match ast {
         Statement::Assert {
             condition: _condition,
-            message: Some(Expr::Value::SingleQuotedString(s)),
+            message: Some(Expr::Value(Value::SingleQuotedString(s))),
         } => {
-            assert_eq!(s, "No rows in my_table"),
+            assert_eq!(s, "No rows in my_table")
         }
         _ => unreachable!(),
     }
@@ -2796,13 +2796,13 @@ fn parse_drop_table() {
             names,
             cascade,
         } => {
-            assert_eq!(false, if_exists);
+            assert!(!if_exists);
             assert_eq!(ObjectType::Table, object_type);
             assert_eq!(
                 vec!["foo"],
                 names.iter().map(ToString::to_string).collect::<Vec<_>>()
             );
-            assert_eq!(false, cascade);
+            assert!(!cascade);
         }
         _ => unreachable!(),
     }
