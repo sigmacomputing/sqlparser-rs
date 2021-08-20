@@ -1091,7 +1091,6 @@ pub struct Function {
     // https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-and-operators#array_agg
     /// Some(true) for IGNORE NULLS, Some(false) for RESPECT NULLS
     pub ignore_respect_nulls: Option<bool>,
-    /// Some(true) for ASC, Some(false) for DESC
     pub order_by: Vec<OrderByExpr>,
     pub limit: Option<Box<Expr>>,
     // for snowflake - this goes outside of the parens

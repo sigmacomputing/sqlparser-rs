@@ -257,22 +257,22 @@ fn parse_select_all_distinct() {
 fn parse_select_wildcard() {
     let sql = "SELECT * FROM foo";
     let select = verified_only_select(sql);
-    assert_eq!(&SelectItem::Wildcard, only(&select.projection));
+    assert_eq!(&SelectItem::Wildcard{prefix: None, except: vec![], replace: vec![]}, only(&select.projection));
 
     let sql = "SELECT foo.* FROM foo";
     let select = verified_only_select(sql);
     assert_eq!(
-        &SelectItem::QualifiedWildcard(ObjectName(vec![Ident::new("foo")])),
+        &SelectItem::Wildcard{prefix: Some(ObjectName(vec![Ident::new("foo")])), except: vec![], replace: vec![]},
         only(&select.projection)
     );
 
     let sql = "SELECT myschema.mytable.* FROM myschema.mytable";
     let select = verified_only_select(sql);
     assert_eq!(
-        &SelectItem::QualifiedWildcard(ObjectName(vec![
+        &SelectItem::Wildcard{ prefix: Some(ObjectName(vec![
             Ident::new("myschema"),
             Ident::new("mytable"),
-        ])),
+        ])), except: vec![], replace: vec![] },
         only(&select.projection)
     );
 }
@@ -331,6 +331,11 @@ fn parse_select_count_wildcard() {
             args: vec![FunctionArg::Unnamed(Expr::Wildcard)],
             over: None,
             distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(only(&select.projection))
     );
@@ -349,6 +354,11 @@ fn parse_select_count_distinct() {
             })],
             over: None,
             distinct: true,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(only(&select.projection))
     );
@@ -578,7 +588,7 @@ fn parse_not_precedence() {
             op: UnaryOperator::Not,
             expr: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Value(Value::SingleQuotedString("a".into()))),
-                op: BinaryOperator::NotLike,
+                op: BinaryOperator::NotRlike,
                 right: Box::new(Expr::Value(Value::SingleQuotedString("b".into()))),
             }),
         },
@@ -611,9 +621,9 @@ fn parse_like() {
             Expr::BinaryOp {
                 left: Box::new(Expr::Identifier(Ident::new("name"))),
                 op: if negated {
-                    BinaryOperator::NotLike
+                    BinaryOperator::NotRlike
                 } else {
-                    BinaryOperator::Like
+                    BinaryOperator::Rlike
                 },
                 right: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
             },
@@ -631,9 +641,9 @@ fn parse_like() {
             Expr::Is{expr: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier(Ident::new("name"))),
                 op: if negated {
-                    BinaryOperator::NotLike
+                    BinaryOperator::NotRlike
                 } else {
-                    BinaryOperator::Like
+                    BinaryOperator::Rlike
                 },
                 right: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
             }), check: IsCheck::NULL, negated: false,},
@@ -888,7 +898,12 @@ fn parse_select_having() {
                 name: ObjectName(vec![Ident::new("COUNT")]),
                 args: vec![FunctionArg::Unnamed(Expr::Wildcard)],
                 over: None,
-                distinct: false
+                distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
             })),
             op: BinaryOperator::Gt,
             right: Box::new(Expr::Value(number("1")))
@@ -916,7 +931,8 @@ fn parse_cast() {
     assert_eq!(
         &Expr::Cast {
             expr: Box::new(Expr::Identifier(Ident::new("id"))),
-            data_type: DataType::BigInt
+            data_type: DataType::BigInt,
+            try_cast: false,
         },
         expr_from_projection(only(&select.projection))
     );
@@ -1601,6 +1617,11 @@ fn parse_scalar_function_in_projection() {
             args: vec![FunctionArg::Unnamed(Expr::Identifier(Ident::new("id")))],
             over: None,
             distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(only(&select.projection))
     );
@@ -1626,6 +1647,11 @@ fn parse_named_argument_function() {
             ],
             over: None,
             distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(only(&select.projection))
     );
@@ -1659,6 +1685,11 @@ fn parse_window_functions() {
                 window_frame: None,
             })),
             distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(&select.projection[0])
     );
@@ -1759,6 +1790,7 @@ fn parse_literal_interval() {
             leading_precision: None,
             last_field: Some(DateTimeField::Month),
             fractional_seconds_precision: None,
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1772,6 +1804,7 @@ fn parse_literal_interval() {
             leading_precision: Some(5),
             last_field: Some(DateTimeField::Second),
             fractional_seconds_precision: Some(5),
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1785,6 +1818,7 @@ fn parse_literal_interval() {
             leading_precision: Some(5),
             last_field: None,
             fractional_seconds_precision: Some(4),
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1798,6 +1832,7 @@ fn parse_literal_interval() {
             leading_precision: None,
             last_field: None,
             fractional_seconds_precision: None,
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1811,6 +1846,7 @@ fn parse_literal_interval() {
             leading_precision: Some(1),
             last_field: None,
             fractional_seconds_precision: None,
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1824,6 +1860,7 @@ fn parse_literal_interval() {
             leading_precision: None,
             last_field: None,
             fractional_seconds_precision: None,
+            value_quoting: None,
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1886,6 +1923,11 @@ fn parse_table_function() {
                 ))],
                 over: None,
                 distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
             });
             assert_eq!(expr, expected_expr);
             assert_eq!(alias, table_alias("a"))
@@ -1942,6 +1984,11 @@ fn parse_delimited_identifiers() {
             args: vec![],
             over: None,
             distinct: false,
+            ignore_respect_nulls: None,
+            limit: None,
+            order_by: vec![],
+            outer_ignore_respect_nulls: None,
+            within_group: vec![],
         }),
         expr_from_projection(&select.projection[1]),
     );
@@ -1965,17 +2012,17 @@ fn parse_parens() {
     let sql = "(a + b) - (c + d)";
     assert_eq!(
         BinaryOp {
-            left: Box::new(Nested(Box::new(BinaryOp {
+            left: Box::new(Nested(vec![BinaryOp {
                 left: Box::new(Identifier(Ident::new("a"))),
                 op: Plus,
                 right: Box::new(Identifier(Ident::new("b")))
-            }))),
+            }])),
             op: Minus,
-            right: Box::new(Nested(Box::new(BinaryOp {
+            right: Box::new(Nested(vec![BinaryOp {
                 left: Box::new(Identifier(Ident::new("c"))),
                 op: Plus,
                 right: Box::new(Identifier(Ident::new("d")))
-            })))
+            }]))
         },
         verified_expr(sql)
     );
