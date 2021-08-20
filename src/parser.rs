@@ -708,10 +708,10 @@ impl<'a> Parser<'a> {
                 | Keyword::WEEKOFYEAR
                 | Keyword::WOY
                 | Keyword::WY => Ok(DateTimeField::Week(None)),
-                Keyword::ISOWEEK => Ok(DateTimeField::Other("ISOWEEK")),
-                Keyword::ISOYEAR => Ok(DateTimeField::Other("ISOYEAR")),
-                Keyword::MICROSECOND => Ok(DateTimeField::Other("MICROSECOND")),
-                Keyword::MILLISECOND => Ok(DateTimeField::Other("MILLISECOND")),
+                Keyword::ISOWEEK => Ok(DateTimeField::Other("ISOWEEK".to_owned())),
+                Keyword::ISOYEAR => Ok(DateTimeField::Other("ISOYEAR".to_owned())),
+                Keyword::MICROSECOND => Ok(DateTimeField::Other("MICROSECOND".to_owned())),
+                Keyword::MILLISECOND => Ok(DateTimeField::Other("MILLISECOND".to_owned())),
                 Keyword::WEEKISO
                 | Keyword::WEEK_ISO
                 | Keyword::WEEKOFYEARISO
@@ -729,8 +729,8 @@ impl<'a> Parser<'a> {
                 Keyword::DAYOFYEAR | Keyword::YEARDAY | Keyword::DOY | Keyword::DY => {
                     Ok(DateTimeField::DayOfYear)
                 }
-                Keyword::DATE => Ok(DateTimeField::Other("DATE")),
-                Keyword::DATETIME => Ok(DateTimeField::Other("DATETIME")),
+                Keyword::DATE => Ok(DateTimeField::Other("DATE".to_owned())),
+                Keyword::DATETIME => Ok(DateTimeField::Other("DATETIME".to_owned())),
                 Keyword::HOUR => Ok(DateTimeField::Hour),
                 Keyword::MINUTE => Ok(DateTimeField::Minute),
                 Keyword::SECOND => Ok(DateTimeField::Second),

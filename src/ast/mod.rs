@@ -480,9 +480,9 @@ impl fmt::Display for IsCheck{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             IsCheck::NULL => write!(f, "NULL"),
-            IsCheck::NULL => write!(f, "FALSE"),
-            IsCheck::NULL => write!(f, "TRUE"),
-            IsCheck::NULL => write!(f, "UNKNOWN"),
+            IsCheck::FALSE => write!(f, "FALSE"),
+            IsCheck::TRUE => write!(f, "TRUE"),
+            IsCheck::UNKNOWN => write!(f, "UNKNOWN"),
         }
     }
 }
