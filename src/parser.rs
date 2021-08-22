@@ -27,6 +27,9 @@ pub enum ParserError {
     ParserError(String, String),
 }
 
+pub type WildcardExcept = Vec<Ident>;
+pub type WildcardReplace = Vec<(Expr, Ident)>;
+
 // Use `Parser::expected` instead, if possible
 macro_rules! parser_err {
     ($parser:expr, $MSG:expr) => {
@@ -2593,14 +2596,11 @@ impl<'a> Parser<'a> {
             // followed by some joins or (B) another level of nesting.
             let mut table_and_joins = self.parse_table_and_joins()?;
 
-            if !table_and_joins.joins.is_empty() {
-                self.expect_token(&Token::RParen)?;
-                Ok(TableFactor::NestedJoin(Box::new(table_and_joins))) // (A)
-            } else if let TableFactor::NestedJoin(_) = &table_and_joins.relation {
+            if !table_and_joins.joins.is_empty() || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_)) {
                 // (B): `table_and_joins` (what we found inside the parentheses)
                 // is a nested join `(foo JOIN bar)`, not followed by other joins.
                 self.expect_token(&Token::RParen)?;
-                Ok(TableFactor::NestedJoin(Box::new(table_and_joins)))
+                Ok(TableFactor::NestedJoin(Box::new(table_and_joins))) // (A)
             } else if dialect_of!(self is SnowflakeDialect | GenericDialect) {
                 // Dialect-specific behavior: Snowflake diverges from the
                 // standard and from most of the other implementations by
@@ -2899,7 +2899,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_wildcard_modifiers(
         &mut self,
-    ) -> Result<(Vec<Ident>, Vec<(Expr, Ident)>), ParserError> {
+    ) -> Result<(WildcardExcept, WildcardReplace), ParserError> {
         let except = if self.parse_keyword(Keyword::EXCEPT) {
             self.expect_token(&Token::LParen)?;
             let aliases = self.parse_comma_separated(Parser::parse_identifier)?;

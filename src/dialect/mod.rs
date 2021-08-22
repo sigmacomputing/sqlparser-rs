@@ -85,10 +85,7 @@ mod tests {
             dialect: ansi_dialect,
         };
 
-        assert_eq!(
-            dialect_of!(generic_holder is GenericDialect |  AnsiDialect),
-            true
-        );
+        assert!(dialect_of!(generic_holder is GenericDialect |  AnsiDialect));
         assert!(!dialect_of!(generic_holder is  AnsiDialect));
 
         assert!(dialect_of!(ansi_holder is  AnsiDialect));

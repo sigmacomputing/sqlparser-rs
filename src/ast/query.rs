@@ -468,6 +468,8 @@ impl fmt::Display for Join {
                 _ => "",
             }
         }
+        
+        #[allow(clippy::needless_lifetimes)]
         fn suffix<'a>(constraint: &'a JoinConstraint) -> impl fmt::Display + 'a {
             struct Suffix<'a>(&'a JoinConstraint);
             impl<'a> fmt::Display for Suffix<'a> {
