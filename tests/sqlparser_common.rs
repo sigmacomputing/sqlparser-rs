@@ -586,10 +586,12 @@ fn parse_not_precedence() {
         verified_expr(sql),
         Expr::UnaryOp {
             op: UnaryOperator::Not,
-            expr: Box::new(Expr::BinaryOp {
-                left: Box::new(Expr::Value(Value::SingleQuotedString("a".into()))),
-                op: BinaryOperator::NotRlike,
-                right: Box::new(Expr::Value(Value::SingleQuotedString("b".into()))),
+            expr: Box::new(Expr::Like {
+              expr: Box::new(Expr::Value(Value::SingleQuotedString("a".into()))),
+              case_sensitive: true,
+              negated: true,
+              pat: Box::new(Expr::Value(Value::SingleQuotedString("b".into()))),
+              esc: None,
             }),
         },
     );
@@ -618,14 +620,12 @@ fn parse_like() {
         );
         let select = verified_only_select(sql);
         assert_eq!(
-            Expr::BinaryOp {
-                left: Box::new(Expr::Identifier(Ident::new("name"))),
-                op: if negated {
-                    BinaryOperator::NotRlike
-                } else {
-                    BinaryOperator::Rlike
-                },
-                right: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+            Expr::Like {
+                expr: Box::new(Expr::Identifier(Ident::new("name"))),
+                case_sensitive: true,
+                negated,
+                pat: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+                esc: None,
             },
             select.selection.unwrap()
         );
@@ -638,14 +638,12 @@ fn parse_like() {
         );
         let select = verified_only_select(sql);
         assert_eq!(
-            Expr::Is{expr: Box::new(Expr::BinaryOp {
-                left: Box::new(Expr::Identifier(Ident::new("name"))),
-                op: if negated {
-                    BinaryOperator::NotRlike
-                } else {
-                    BinaryOperator::Rlike
-                },
-                right: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+            Expr::Is{expr: Box::new(Expr::Like {
+                expr: Box::new(Expr::Identifier(Ident::new("name"))),
+                case_sensitive: true,
+                negated,
+                pat: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+                esc: None,
             }), check: IsCheck::NULL, negated: false,},
             select.selection.unwrap()
         );
@@ -1824,7 +1822,7 @@ fn parse_literal_interval() {
             leading_precision: None,
             last_field: None,
             fractional_seconds_precision: None,
-            value_quoting: None,
+            value_quoting: Some('\''),
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1838,7 +1836,7 @@ fn parse_literal_interval() {
             leading_precision: Some(1),
             last_field: None,
             fractional_seconds_precision: None,
-            value_quoting: None,
+            value_quoting: Some('\''),
         }),
         expr_from_projection(only(&select.projection)),
     );
@@ -1852,20 +1850,20 @@ fn parse_literal_interval() {
             leading_precision: None,
             last_field: None,
             fractional_seconds_precision: None,
-            value_quoting: None,
+            value_quoting: Some('\''),
         }),
         expr_from_projection(only(&select.projection)),
     );
 
     let result = parse_sql_statements("SELECT INTERVAL '1' SECOND TO SECOND");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: SECOND".to_string()),
+        ParserError::ParserError("SELECT INTERVAL '1' SECOND TO".to_string(), "Expected end of statement, found: SECOND".to_string()),
         result.unwrap_err(),
     );
 
     let result = parse_sql_statements("SELECT INTERVAL '10' HOUR (1) TO HOUR (2)");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: (".to_string()),
+        ParserError::ParserError("SELECT INTERVAL '10' HOUR (1) TO HOUR ".to_string(), "Expected end of statement, found: (".to_string()),
         result.unwrap_err(),
     );
 
