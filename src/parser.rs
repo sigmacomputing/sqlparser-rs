@@ -1936,7 +1936,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn preceding_toks(&self) -> String {
-        if self.tokens.is_empty() { 
+        if self.tokens.is_empty() {
             return "".to_string();
         }
         let slice_start = if self.index < 20 { 0 } else { self.index - 20 };
@@ -2599,7 +2599,9 @@ impl<'a> Parser<'a> {
             // followed by some joins or (B) another level of nesting.
             let mut table_and_joins = self.parse_table_and_joins()?;
 
-            if !table_and_joins.joins.is_empty() || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_)) {
+            if !table_and_joins.joins.is_empty()
+                || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_))
+            {
                 // (B): `table_and_joins` (what we found inside the parentheses)
                 // is a nested join `(foo JOIN bar)`, not followed by other joins.
                 self.expect_token(&Token::RParen)?;

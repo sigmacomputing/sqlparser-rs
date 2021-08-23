@@ -133,13 +133,19 @@ fn test_single_table_in_parenthesis_with_alias() {
 
     let res = snowflake_and_generic().parse_sql_statements("SELECT * FROM (a NATURAL JOIN b) c");
     assert_eq!(
-        ParserError::ParserError("SELECT * FROM (a NATURAL JOIN b)".to_string(), "Expected end of statement, found: c".to_string()),
+        ParserError::ParserError(
+            "SELECT * FROM (a NATURAL JOIN b)".to_string(),
+            "Expected end of statement, found: c".to_string()
+        ),
         res.unwrap_err()
     );
 
     let res = snowflake().parse_sql_statements("SELECT * FROM (a b) c");
     assert_eq!(
-        ParserError::ParserError("SELECT * FROM (a b) ".to_string(), "duplicate alias b".to_string()),
+        ParserError::ParserError(
+            "SELECT * FROM (a b) ".to_string(),
+            "duplicate alias b".to_string()
+        ),
         res.unwrap_err()
     );
 }
