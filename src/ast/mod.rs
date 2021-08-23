@@ -164,7 +164,7 @@ pub enum Expr {
     /// `IS [NOT] { NULL | FALSE | TRUE | UNKNOWN }` expression
     Is {
         expr: Box<Expr>,
-        check: &'static str,
+        check: IsCheck,
         negated: bool,
     },
     InList {
@@ -466,9 +466,31 @@ impl fmt::Display for Expr {
     }
 }
 
+/// An enum for Is Expr
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum IsCheck {
+    NULL,
+    FALSE,
+    TRUE,
+    UNKNOWN
+}
+
+impl fmt::Display for IsCheck{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            IsCheck::NULL => write!(f, "NULL"),
+            IsCheck::FALSE => write!(f, "FALSE"),
+            IsCheck::TRUE => write!(f, "TRUE"),
+            IsCheck::UNKNOWN => write!(f, "UNKNOWN"),
+        }
+    }
+}
+
 /// A window specification, either inline or named
 /// https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_clause
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum WindowSpec {
     Inline(InlineWindowSpec),
     Named(Ident),
@@ -500,15 +522,14 @@ impl fmt::Display for InlineWindowSpec {
             write!(f, "ORDER BY {}", display_comma_separated(&self.order_by))?;
         }
         if let Some(window_frame) = &self.window_frame {
+            f.write_str(delim)?;
             if let Some(end_bound) = &window_frame.end_bound {
-                f.write_str(delim)?;
                 write!(
                     f,
                     "{} BETWEEN {} AND {}",
                     window_frame.units, window_frame.start_bound, end_bound
                 )?;
             } else {
-                f.write_str(delim)?;
                 write!(f, "{} {}", window_frame.units, window_frame.start_bound)?;
             }
         }
@@ -1069,7 +1090,6 @@ pub struct Function {
     // https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-and-operators#array_agg
     /// Some(true) for IGNORE NULLS, Some(false) for RESPECT NULLS
     pub ignore_respect_nulls: Option<bool>,
-    /// Some(true) for ASC, Some(false) for DESC
     pub order_by: Vec<OrderByExpr>,
     pub limit: Option<Box<Expr>>,
     // for snowflake - this goes outside of the parens
@@ -1334,6 +1354,7 @@ impl fmt::Display for TransactionIsolationLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[allow(clippy::large_enum_variant)]
 pub enum ShowStatementFilter {
     Like(String),
     Where(Expr),

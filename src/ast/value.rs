@@ -146,7 +146,7 @@ pub enum DateTimeField {
     Second,
     Epoch,
     // https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-and-operators#extract_2
-    Other(&'static str),
+    Other(String),
     Literal(String),
 }
 
@@ -169,7 +169,7 @@ impl fmt::Display for DateTimeField {
             DateTimeField::Minute => "MINUTE",
             DateTimeField::Second => "SECOND",
             DateTimeField::Epoch => "EPOCH",
-            DateTimeField::Other(s) => return write!(f, "{}", s),
+            DateTimeField::Other(ref s) => return write!(f, "{}", s),
             DateTimeField::Literal(ref s) => return write!(f, "'{}'", s),
         })
     }

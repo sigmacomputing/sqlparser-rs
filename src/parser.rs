@@ -27,6 +27,9 @@ pub enum ParserError {
     ParserError(String, String),
 }
 
+pub type WildcardExcept = Vec<Ident>;
+pub type WildcardReplace = Vec<(Expr, Ident)>;
+
 // Use `Parser::expected` instead, if possible
 macro_rules! parser_err {
     ($parser:expr, $MSG:expr) => {
@@ -110,7 +113,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a SQL statement and produce an Abstract Syntax Tree (AST)
     pub fn parse_sql(dialect: &dyn Dialect, sql: &str) -> Result<Vec<Statement>, ParserError> {
-        let mut tokenizer = Tokenizer::new(dialect, &sql);
+        let mut tokenizer = Tokenizer::new(dialect, sql);
         let tokens = tokenizer.tokenize()?;
         let mut parser = Parser::new(tokens, dialect);
         let mut stmts = Vec::new();
@@ -275,7 +278,7 @@ impl<'a> Parser<'a> {
                 _ => self.parse_ident(w.to_ident()),
             }, // End of Token::Word
             Token::BacktickQuotedString(w) => self.parse_ident(Ident {
-                value: w.clone(),
+                value: w,
                 quote_style: Some('`'),
             }),
             Token::DoubleQuotedString(s) => Ok(Expr::Value(Value::DoubleQuotedString(s))),
@@ -429,7 +432,7 @@ impl<'a> Parser<'a> {
         let ident = self.parse_identifier()?;
         self.expect_keyword(Keyword::AS)?;
         let spec = self.parse_window_spec()?;
-        return Ok((ident, spec));
+        Ok((ident, spec))
     }
 
     pub fn parse_window_spec(&mut self) -> Result<WindowSpec, ParserError> {
@@ -708,10 +711,10 @@ impl<'a> Parser<'a> {
                 | Keyword::WEEKOFYEAR
                 | Keyword::WOY
                 | Keyword::WY => Ok(DateTimeField::Week(None)),
-                Keyword::ISOWEEK => Ok(DateTimeField::Other("ISOWEEK")),
-                Keyword::ISOYEAR => Ok(DateTimeField::Other("ISOYEAR")),
-                Keyword::MICROSECOND => Ok(DateTimeField::Other("MICROSECOND")),
-                Keyword::MILLISECOND => Ok(DateTimeField::Other("MILLISECOND")),
+                Keyword::ISOWEEK => Ok(DateTimeField::Other("ISOWEEK".to_owned())),
+                Keyword::ISOYEAR => Ok(DateTimeField::Other("ISOYEAR".to_owned())),
+                Keyword::MICROSECOND => Ok(DateTimeField::Other("MICROSECOND".to_owned())),
+                Keyword::MILLISECOND => Ok(DateTimeField::Other("MILLISECOND".to_owned())),
                 Keyword::WEEKISO
                 | Keyword::WEEK_ISO
                 | Keyword::WEEKOFYEARISO
@@ -729,15 +732,15 @@ impl<'a> Parser<'a> {
                 Keyword::DAYOFYEAR | Keyword::YEARDAY | Keyword::DOY | Keyword::DY => {
                     Ok(DateTimeField::DayOfYear)
                 }
-                Keyword::DATE => Ok(DateTimeField::Other("DATE")),
-                Keyword::DATETIME => Ok(DateTimeField::Other("DATETIME")),
+                Keyword::DATE => Ok(DateTimeField::Other("DATE".to_owned())),
+                Keyword::DATETIME => Ok(DateTimeField::Other("DATETIME".to_owned())),
                 Keyword::HOUR => Ok(DateTimeField::Hour),
                 Keyword::MINUTE => Ok(DateTimeField::Minute),
                 Keyword::SECOND => Ok(DateTimeField::Second),
                 Keyword::EPOCH => Ok(DateTimeField::Epoch),
                 _ => self.expected("date/time field", Token::Word(w))?,
             },
-            Token::SingleQuotedString(w) => Ok(DateTimeField::Literal(w.clone())),
+            Token::SingleQuotedString(w) => Ok(DateTimeField::Literal(w)),
             unexpected => self.expected("date/time field", unexpected),
         }
     }
@@ -938,10 +941,10 @@ impl<'a> Parser<'a> {
                 Keyword::IS => {
                     let negated = self.parse_keyword(Keyword::NOT);
                     let check = match self.next_token() {
-                        Token::Word(w) if w.keyword == Keyword::NULL => "NULL",
-                        Token::Word(w) if w.keyword == Keyword::FALSE => "FALSE",
-                        Token::Word(w) if w.keyword == Keyword::TRUE => "TRUE",
-                        Token::Word(w) if w.keyword == Keyword::UNKNOWN => "UNKNOWN",
+                        Token::Word(w) if w.keyword == Keyword::NULL => IsCheck::NULL,
+                        Token::Word(w) if w.keyword == Keyword::FALSE => IsCheck::FALSE,
+                        Token::Word(w) if w.keyword == Keyword::TRUE => IsCheck::TRUE,
+                        Token::Word(w) if w.keyword == Keyword::UNKNOWN => IsCheck::UNKNOWN,
                         unexpected => {
                             return self.expected("NULL, FALSE, TRUE, or UNKNOWN", unexpected)
                         }
@@ -2593,14 +2596,11 @@ impl<'a> Parser<'a> {
             // followed by some joins or (B) another level of nesting.
             let mut table_and_joins = self.parse_table_and_joins()?;
 
-            if !table_and_joins.joins.is_empty() {
-                self.expect_token(&Token::RParen)?;
-                Ok(TableFactor::NestedJoin(Box::new(table_and_joins))) // (A)
-            } else if let TableFactor::NestedJoin(_) = &table_and_joins.relation {
+            if !table_and_joins.joins.is_empty() || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_)) {
                 // (B): `table_and_joins` (what we found inside the parentheses)
                 // is a nested join `(foo JOIN bar)`, not followed by other joins.
                 self.expect_token(&Token::RParen)?;
-                Ok(TableFactor::NestedJoin(Box::new(table_and_joins)))
+                Ok(TableFactor::NestedJoin(Box::new(table_and_joins))) // (A)
             } else if dialect_of!(self is SnowflakeDialect | GenericDialect) {
                 // Dialect-specific behavior: Snowflake diverges from the
                 // standard and from most of the other implementations by
@@ -2840,13 +2840,13 @@ impl<'a> Parser<'a> {
         args_res: FunctionArgsRes,
     ) -> Result<Vec<FunctionArg>, ParserError> {
         if args_res.ignore_respect_nulls.is_some() {
-            return parser_err!(self, format!("Unexpected IGNORE|RESPECT NULLS clause"));
-        } else if args_res.order_by.len() > 0 {
-            return parser_err!(self, format!("Unexpected ORDER BY clause"));
+            return parser_err!(self, "Unexpected IGNORE|RESPECT NULLS clause".to_string());
+        } else if !args_res.order_by.is_empty() {
+            return parser_err!(self, "Unexpected ORDER BY clause".to_string());
         } else if args_res.limit.is_some() {
-            return parser_err!(self, format!("Unexpected LIMIT clause"));
+            return parser_err!(self, "Unexpected LIMIT clause".to_string());
         }
-        return Ok(args_res.args);
+        Ok(args_res.args)
     }
 
     pub fn parse_optional_args(&mut self) -> Result<FunctionArgsRes, ParserError> {
@@ -2899,7 +2899,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_wildcard_modifiers(
         &mut self,
-    ) -> Result<(Vec<Ident>, Vec<(Expr, Ident)>), ParserError> {
+    ) -> Result<(WildcardExcept, WildcardReplace), ParserError> {
         let except = if self.parse_keyword(Keyword::EXCEPT) {
             self.expect_token(&Token::LParen)?;
             let aliases = self.parse_comma_separated(Parser::parse_identifier)?;
