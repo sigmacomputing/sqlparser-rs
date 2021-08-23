@@ -280,25 +280,25 @@ fn parse_create_table_if_not_exists() {
 fn parse_bad_if_not_exists() {
     let res = pg().parse_sql_statements("CREATE TABLE NOT EXISTS uk_cities ()");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: EXISTS".to_string()),
+        ParserError::ParserError("CREATE TABLE NOT".to_string(), "Expected end of statement, found: EXISTS".to_string()),
         res.unwrap_err()
     );
 
     let res = pg().parse_sql_statements("CREATE TABLE IF EXISTS uk_cities ()");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: EXISTS".to_string()),
+        ParserError::ParserError("CREATE TABLE IF".to_string(), "Expected end of statement, found: EXISTS".to_string()),
         res.unwrap_err()
     );
 
     let res = pg().parse_sql_statements("CREATE TABLE IF uk_cities ()");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: uk_cities".to_string()),
+        ParserError::ParserError("CREATE TABLE IF".to_string(), "Expected end of statement, found: uk_cities".to_string()),
         res.unwrap_err()
     );
 
     let res = pg().parse_sql_statements("CREATE TABLE IF NOT uk_cities ()");
     assert_eq!(
-        ParserError::ParserError("".to_string(), "Expected end of statement, found: NOT".to_string()),
+        ParserError::ParserError("CREATE TABLE IF".to_string(), "Expected end of statement, found: NOT".to_string()),
         res.unwrap_err()
     );
 }
@@ -421,14 +421,14 @@ fn parse_set() {
 
     assert_eq!(
         pg_and_generic().parse_sql_statements("SET a b"),
-        Err(ParserError::ParserError("".to_string(), 
+        Err(ParserError::ParserError("SET a".to_string(), 
             "Expected equals sign or TO, found: b".to_string()
         )),
     );
 
     assert_eq!(
         pg_and_generic().parse_sql_statements("SET a ="),
-        Err(ParserError::ParserError("".to_string(), 
+        Err(ParserError::ParserError("SET a ".to_string(), 
             "Expected variable value, found: EOF".to_string()
         )),
     );
