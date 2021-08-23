@@ -25,7 +25,7 @@ use sqlparser::tokenizer::*;
 
 #[test]
 fn test_snowflake_create_table() {
-    let sql = "CREATE TABLE _my_$table (am00unt number)";
+    let sql = "CREATE TABLE _my_$table (am00unt NUMERIC)";
     match snowflake_and_generic().verified_stmt(sql) {
         Statement::CreateTable { name, .. } => {
             assert_eq!("_my_$table", name.to_string());
