@@ -1936,7 +1936,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn preceding_toks(&self) -> String {
-        if self.tokens.len() == 0 { 
+        if self.tokens.is_empty() { 
             return "".to_string();
         }
         let slice_start = if self.index < 20 { 0 } else { self.index - 20 };
