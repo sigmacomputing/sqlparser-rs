@@ -728,7 +728,7 @@ impl<'a> Tokenizer<'a> {
             match ch {
                 // allow backslash to escape the next character, whatever it is
                 '\\' => {
-                    s.push('\\');
+                    chars.next(); // consume the escape char
                     if let Some(next_ch) = chars.next() {
                         s.push(next_ch);
                     }
@@ -739,7 +739,6 @@ impl<'a> Tokenizer<'a> {
                     && ch == quote_ch
                     && next_char_is_quote =>
                 {
-                    s.push(quote_ch);
                     s.push(quote_ch);
                     chars.next(); // consume quote_ch
                 }

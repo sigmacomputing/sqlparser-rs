@@ -479,7 +479,6 @@ fn parse_select_with_date_column_name() {
 }
 
 #[test]
-#[ignore]
 fn parse_escaped_single_quote_string_predicate() {
     use self::BinaryOperator::*;
     let sql = "SELECT id, fname, lname FROM customer \
