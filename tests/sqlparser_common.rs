@@ -665,7 +665,6 @@ fn parse_not_precedence() {
 }
 
 #[test]
-#[ignore]
 fn parse_like() {
     fn chk(negated: bool) {
         let sql = &format!(

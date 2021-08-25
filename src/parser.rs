@@ -979,9 +979,9 @@ impl<'a> Parser<'a> {
                     } else if self.parse_keyword(Keyword::BETWEEN) {
                         Ok((self.parse_between(expr, negated)?, true))
                     } else if self.parse_keyword(Keyword::LIKE) {
-                        Ok((self.parse_like(expr, true, negated)?, true))
+                        Ok((self.parse_like(expr, true, negated, precedence)?, true))
                     } else if self.parse_keyword(Keyword::ILIKE) {
-                        Ok((self.parse_like(expr, false, negated)?, true))
+                        Ok((self.parse_like(expr, false, negated, precedence)?, true))
                     } else if self.parse_keywords(&[Keyword::SIMILAR, Keyword::TO]) {
                         Ok((self.parse_similar(expr, negated)?, true))
                     } else {
@@ -1067,10 +1067,11 @@ impl<'a> Parser<'a> {
         expr: Expr,
         case_sensitive: bool,
         negated: bool,
+        precedence: u8,
     ) -> Result<Expr, ParserError> {
-        let pat = self.parse_expr()?;
+        let pat = self.parse_subexpr(precedence)?;
         let esc = if self.parse_keyword(Keyword::ESCAPE) {
-            Some(self.parse_expr()?)
+            Some(self.parse_subexpr(precedence)?)
         } else {
             None
         };
