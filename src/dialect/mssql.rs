@@ -23,7 +23,11 @@ impl Dialect for MsSqlDialect {
     fn is_identifier_start(&self, ch: char) -> bool {
         // See https://docs.microsoft.com/en-us/sql/relational-databases/databases/database-identifiers?view=sql-server-2017#rules-for-regular-identifiers
         // We don't support non-latin "letters" currently.
-        ('a'..='z').contains(&ch) || ('A'..='Z').contains(&ch) || ch == '_' || ch == '#' || ch == '@'
+        ('a'..='z').contains(&ch)
+            || ('A'..='Z').contains(&ch)
+            || ch == '_'
+            || ch == '#'
+            || ch == '@'
     }
 
     fn is_identifier_part(&self, ch: char) -> bool {

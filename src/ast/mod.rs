@@ -473,10 +473,10 @@ pub enum IsCheck {
     NULL,
     FALSE,
     TRUE,
-    UNKNOWN
+    UNKNOWN,
 }
 
-impl fmt::Display for IsCheck{
+impl fmt::Display for IsCheck {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             IsCheck::NULL => write!(f, "NULL"),

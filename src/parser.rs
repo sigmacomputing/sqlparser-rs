@@ -979,9 +979,9 @@ impl<'a> Parser<'a> {
                     } else if self.parse_keyword(Keyword::BETWEEN) {
                         Ok((self.parse_between(expr, negated)?, true))
                     } else if self.parse_keyword(Keyword::LIKE) {
-                        Ok((self.parse_like(expr, true, negated)?, true))
+                        Ok((self.parse_like(expr, true, negated, precedence)?, true))
                     } else if self.parse_keyword(Keyword::ILIKE) {
-                        Ok((self.parse_like(expr, false, negated)?, true))
+                        Ok((self.parse_like(expr, false, negated, precedence)?, true))
                     } else if self.parse_keywords(&[Keyword::SIMILAR, Keyword::TO]) {
                         Ok((self.parse_similar(expr, negated)?, true))
                     } else {
@@ -1067,10 +1067,11 @@ impl<'a> Parser<'a> {
         expr: Expr,
         case_sensitive: bool,
         negated: bool,
+        precedence: u8,
     ) -> Result<Expr, ParserError> {
-        let pat = self.parse_expr()?;
+        let pat = self.parse_subexpr(precedence)?;
         let esc = if self.parse_keyword(Keyword::ESCAPE) {
-            Some(self.parse_expr()?)
+            Some(self.parse_subexpr(precedence)?)
         } else {
             None
         };
@@ -1936,6 +1937,9 @@ impl<'a> Parser<'a> {
     }
 
     pub fn preceding_toks(&self) -> String {
+        if self.tokens.is_empty() {
+            return "".to_string();
+        }
         let slice_start = if self.index < 20 { 0 } else { self.index - 20 };
         let slice_end = if self.index >= self.tokens.len() {
             self.tokens.len() - 1
@@ -2596,7 +2600,9 @@ impl<'a> Parser<'a> {
             // followed by some joins or (B) another level of nesting.
             let mut table_and_joins = self.parse_table_and_joins()?;
 
-            if !table_and_joins.joins.is_empty() || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_)) {
+            if !table_and_joins.joins.is_empty()
+                || matches!(&table_and_joins.relation, TableFactor::NestedJoin(_))
+            {
                 // (B): `table_and_joins` (what we found inside the parentheses)
                 // is a nested join `(foo JOIN bar)`, not followed by other joins.
                 self.expect_token(&Token::RParen)?;
