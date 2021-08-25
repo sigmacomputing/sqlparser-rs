@@ -29,6 +29,9 @@ macro_rules! tpch_tests {
             let res = Parser::parse_sql(&dialect, QUERIES[$value -1]);
             // Ignore 6.sql and 22.sql
             if $value != 6 && $value != 22 {
+                if !res.is_ok() {
+                    println!("Res is: {:?}", res);
+                }
                 assert!(res.is_ok());
             }
         }
@@ -59,4 +62,6 @@ tpch_tests! {
     tpch_20: 20,
     tpch_21: 21,
     tpch_22: 22,
+    tpch_23: 23,
+    tpch_24: 24,
 }
