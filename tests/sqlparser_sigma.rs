@@ -245,7 +245,7 @@ fn parse_complicated_sql() {
                                                         value: "month".to_string(),
                                                         quote_style: None,
                                                     })),
-                                                    Unnamed(Value(Number("1".to_string()))),
+                                                    Unnamed(Value(number("1"))),
                                                     Unnamed(Expr::Function(Function {
                                                         name: ObjectName(vec![Ident {
                                                             value: "date_trunc".to_string(),
@@ -749,19 +749,19 @@ fn parse_complicated_sql() {
                                                                             quote_style: None,
                                                                         })),
                                                                         op: Minus,
-                                                                        right: Box::new(Value(Number("0".to_string()))),
+                                                                        right: Box::new(Value(number("0"))),
                                                                     }),
                                                                     op: Lt,
-                                                                    right: Box::new(Value(Number("1".to_string()))),
+                                                                    right: Box::new(Value(number("1"))),
                                                                 }),
-                                                                Unnamed(Value(Number("0".to_string()))),
+                                                                Unnamed(Value(number("0"))),
                                                                 Unnamed(BinaryOp {
                                                                     left: Box::new(Identifier(Ident {
                                                                         value: "forecast_acv_c".to_string(),
                                                                         quote_style: None,
                                                                     })),
                                                                     op: Minus,
-                                                                    right: Box::new(Value(Number("0".to_string()))),
+                                                                    right: Box::new(Value(number("0"))),
                                                                 }),
                                                             ],
                                                             within_group: vec![],
@@ -792,9 +792,9 @@ fn parse_complicated_sql() {
                                                                         })),
                                                                     }),
                                                                     op: Lt,
-                                                                    right: Box::new(Value(Number("1".to_string()))),
+                                                                    right: Box::new(Value(number("1"))),
                                                                 }),
-                                                                Unnamed(Value(Number("0".to_string()))),
+                                                                Unnamed(Value(number("0"))),
                                                                 Unnamed(BinaryOp {
                                                                     left: Box::new(Identifier(Ident {
                                                                         value: "forecast_acv_c".to_string(),
@@ -824,7 +824,7 @@ fn parse_complicated_sql() {
                                                     limit: None,
                                                     outer_ignore_respect_nulls: None,
                                                 })),
-                                                Unnamed(Value(Number("0".to_string()))),
+                                                Unnamed(Value(number("0"))),
                                             ],
                                             within_group: vec![],
                                             over: None,
@@ -1033,13 +1033,13 @@ fn parse_complicated_sql() {
                                 }),
                             }),
                             group_by: vec![
-                                Value(Number("1".to_string())),
-                                Value(Number("2".to_string())),
-                                Value(Number("3".to_string())),
-                                Value(Number("4".to_string())),
-                                Value(Number("5".to_string())),
-                                Value(Number("6".to_string())),
-                                Value(Number("7".to_string())),
+                                Value(number("1")),
+                                Value(number("2")),
+                                Value(number("3")),
+                                Value(number("4")),
+                                Value(number("5")),
+                                Value(number("6")),
+                                Value(number("7")),
                             ],
                             having: None,
                             qualify: None,
@@ -1302,7 +1302,7 @@ fn parse_complicated_sql() {
                                                             value: "month".to_string(),
                                                             quote_style: None,
                                                         })),
-                                                        Unnamed(Value(Number("0".to_string()))),
+                                                        Unnamed(Value(number("0"))),
                                                         Unnamed(CompoundIdentifier(vec![
                                                             Ident {
                                                                 value: "p".to_string(),
@@ -1451,7 +1451,7 @@ fn parse_complicated_sql() {
                                                 check: NULL,
                                                 negated: false,
                                             }),
-                                            Unnamed(Value(Number("0".to_string()))),
+                                            Unnamed(Value(number("0"))),
                                             Unnamed(CompoundIdentifier(vec![
                                                 Ident {
                                                     value: "p".to_string(),
@@ -1920,7 +1920,7 @@ fn parse_complicated_sql() {
                                                     quote_style: None,
                                                 })),
                                                 op: GtEq,
-                                                right: Box::new(Value(Number("12".to_string()))),
+                                                right: Box::new(Value(number("12"))),
                                             }),
                                             Unnamed(Expr::Function(Function {
                                                 name: ObjectName(vec![Ident {
@@ -2199,7 +2199,7 @@ fn parse_complicated_sql() {
                                                     },
                                                 ])),
                                                 op: LtEq,
-                                                right: Box::new(Value(Number("0".to_string()))),
+                                                right: Box::new(Value(number("0"))),
                                             }),
                                             Unnamed(BinaryOp {
                                                 left: Box::new(Nested(vec![BinaryOp {
@@ -2226,7 +2226,7 @@ fn parse_complicated_sql() {
                                                     ])),
                                                 }])),
                                                 op: Divide,
-                                                right: Box::new(Value(Number("1".to_string()))),
+                                                right: Box::new(Value(number("1"))),
                                             }),
                                             Unnamed(Expr::Function(Function {
                                                 name: ObjectName(vec![Ident {
@@ -2246,7 +2246,7 @@ fn parse_complicated_sql() {
                                                             },
                                                         ])),
                                                         op: LtEq,
-                                                        right: Box::new(Value(Number("0".to_string()))),
+                                                        right: Box::new(Value(number("0"))),
                                                     }),
                                                     Unnamed(BinaryOp {
                                                         left: Box::new(CompoundIdentifier(vec![
@@ -2272,7 +2272,7 @@ fn parse_complicated_sql() {
                                                                 },
                                                             ])),
                                                             op: Divide,
-                                                            right: Box::new(Value(Number("1".to_string()))),
+                                                            right: Box::new(Value(number("1"))),
                                                         }),
                                                     }),
                                                     Unnamed(BinaryOp {
@@ -2416,7 +2416,7 @@ fn parse_complicated_sql() {
                                                     },
                                                 ])),
                                                 op: Minus,
-                                                right: Box::new(Value(Number("1".to_string()))),
+                                                right: Box::new(Value(number("1"))),
                                             }),
                                         }),
                                     })),
@@ -2434,7 +2434,7 @@ fn parse_complicated_sql() {
                                     },
                                 ])),
                                 op: LtEq,
-                                right: Box::new(Value(Number("24".to_string()))),
+                                right: Box::new(Value(number("24"))),
                             }),
                             group_by: vec![],
                             having: None,
@@ -2488,7 +2488,7 @@ fn parse_complicated_sql() {
                                             value: "PERCENTILE_CONT".to_string(),
                                             quote_style: None,
                                         }]),
-                                        args: vec![Unnamed(Value(Number(".80".to_string())))],
+                                        args: vec![Unnamed(Value(number(".80")))],
                                         within_group: vec![OrderByExpr {
                                             expr: Identifier(Ident {
                                                 value: "max_growth".to_string(),
@@ -2565,7 +2565,7 @@ fn parse_complicated_sql() {
                                             value: "PERCENTILE_CONT".to_string(),
                                             quote_style: None,
                                         }]),
-                                        args: vec![Unnamed(Value(Number(".8".to_string())))],
+                                        args: vec![Unnamed(Value(number(".8")))],
                                         within_group: vec![OrderByExpr {
                                             expr: Identifier(Ident {
                                                 value: "max_growth".to_string(),
@@ -2666,8 +2666,8 @@ fn parse_complicated_sql() {
                                                     },
                                                 ])),
                                             }),
-                                            Unnamed(Value(Number("1".to_string()))),
-                                            Unnamed(Value(Number("0".to_string()))),
+                                            Unnamed(Value(number("1"))),
+                                            Unnamed(Value(number("0"))),
                                         ],
                                         within_group: vec![],
                                         over: None,
@@ -2790,8 +2790,8 @@ fn parse_complicated_sql() {
                                     },
                                 ])),
                             }),
-                            Unnamed(Value(Number("1".to_string()))),
-                            Unnamed(Value(Number("0".to_string()))),
+                            Unnamed(Value(number("1"))),
+                            Unnamed(Value(number("0"))),
                         ],
                         within_group: vec![],
                         over: None,
