@@ -18,22 +18,22 @@
 mod test_utils;
 use test_utils::*;
 
-use sqlparser::ast::*;
 use sqlparser::ast::BinaryOperator::*;
+use sqlparser::ast::DataType::*;
 use sqlparser::ast::Expr::*;
+use sqlparser::ast::FunctionArg::*;
+use sqlparser::ast::IsCheck::*;
 use sqlparser::ast::JoinConstraint::*;
 use sqlparser::ast::JoinOperator::*;
-use sqlparser::ast::TableFactor::*;
-use sqlparser::ast::Value::*;
 use sqlparser::ast::SelectItem::*;
 use sqlparser::ast::SetExpr::*;
-use sqlparser::ast::WindowSpec::*;
+use sqlparser::ast::TableFactor::*;
+use sqlparser::ast::Value::*;
 use sqlparser::ast::WindowFrameBound::*;
 use sqlparser::ast::WindowFrameUnits::*;
-use sqlparser::ast::IsCheck::*;
-use sqlparser::ast::DataType::*;
-use sqlparser::ast::FunctionArg::*;
-use sqlparser::ast::{Select, Function, Query};
+use sqlparser::ast::WindowSpec::*;
+use sqlparser::ast::*;
+use sqlparser::ast::{Function, Query, Select};
 
 #[test]
 fn parse_complicated_sql() {
