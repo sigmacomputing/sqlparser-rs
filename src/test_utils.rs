@@ -136,6 +136,17 @@ pub fn all_dialects() -> TestedDialects {
     }
 }
 
+pub fn sigma_main_dialects() -> TestedDialects {
+    TestedDialects {
+        dialects: vec![
+            Box::new(SnowflakeDialect {}),
+            Box::new(BigQueryDialect {}),
+            Box::new(PostgreSqlDialect {}),
+            Box::new(MsSqlDialect {}),
+        ],
+    }
+}
+
 pub fn only<T>(v: impl IntoIterator<Item = T>) -> T {
     let mut iter = v.into_iter();
     if let (Some(item), None) = (iter.next(), iter.next()) {
