@@ -74,8 +74,15 @@ regression_tests! {
 }
 
 regression_tests! {
-    path: "queries/snowflake//",
+    path: "queries/snowflake/",
     tests: [
         snowflake_wildcard_modifiers_exclude: "wildcard_modifiers_exclude",
+    ],
+}
+
+regression_tests! {
+    path: "queries/bigquery/",
+    tests: [
+        bigquery_wildcard_modifiers_except: "wildcard_modifiers_except",
     ],
 }

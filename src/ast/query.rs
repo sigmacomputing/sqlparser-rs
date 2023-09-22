@@ -251,11 +251,12 @@ impl fmt::Display for SelectItem {
                 }
                 let mut delim = "";
                 if !except.is_empty() {
-                    write!(f, " EXCEPT ")?;
+                    write!(f, " EXCEPT (")?;
                     for col in except {
                         write!(f, "{}{}", delim, col)?;
                         delim = ", ";
                     }
+                    write!(f, ")")?;
                 }
                 delim = "";
                 if !exclude.is_empty() {
