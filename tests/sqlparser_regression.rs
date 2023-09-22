@@ -77,6 +77,7 @@ regression_tests! {
     path: "queries/snowflake/",
     tests: [
         snowflake_wildcard_modifiers_exclude: "wildcard_modifiers_exclude",
+        snowflake_wildcard_modifiers_replace: "wildcard_modifiers_replace",
     ],
 }
 
