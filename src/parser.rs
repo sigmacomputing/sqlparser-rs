@@ -1221,8 +1221,7 @@ impl<'a> Parser<'a> {
 
     /// Return the first unprocessed token, possibly whitespace.
     pub fn next_token_no_skip(&mut self) -> Option<&Token> {
-        self.index += 1;
-        self.tokens.get(self.index - 1)
+        self.tokens.get(self.index)
     }
 
     /// Push back the last one non-whitespace token. Must be called after
