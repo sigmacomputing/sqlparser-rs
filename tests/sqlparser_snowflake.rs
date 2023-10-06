@@ -177,15 +177,16 @@ fn parse_select_as_func_argument() {
         "SELECT func((WITH foo AS (SELECT 1) SELECT 1))",
     );
 
-        // named function arguments should not work
-        assert_eq!(snowflake().parse_sql_statements(
-            "SELECT func(expr => SELECT 1)",
-           
-        ).unwrap_err(),
+    // named function arguments should not work
+    let res = snowflake().parse_sql_statements(
+        "SELECT func(expr => SELECT 1)",
+    );
+    assert_eq!(
+        res.unwrap_err(),
         ParserError::ParserError(
             "SELECT func(expr => SELECT".to_string(),
             "Expected ), found: 1".to_string()
-        ));
+    ));
 }
 
 fn snowflake() -> TestedDialects {
