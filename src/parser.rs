@@ -2775,8 +2775,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_args(&mut self) -> Result<FunctionArg, ParserError> {
-
-        
         if self.peek_nth_token(1) == Token::RArrow {
             let name = self.parse_identifier()?;
 
