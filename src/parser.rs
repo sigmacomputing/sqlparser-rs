@@ -1220,8 +1220,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Return the first unprocessed token, possibly whitespace.
+    /// FIXME: This function skips the token
     pub fn next_token_no_skip(&mut self) -> Option<&Token> {
-        self.tokens.get(self.index)
+        self.index += 1;
+        self.tokens.get(self.index - 1)
     }
 
     /// Push back the last one non-whitespace token. Must be called after
