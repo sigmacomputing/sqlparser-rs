@@ -2775,6 +2775,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_args(&mut self) -> Result<FunctionArg, ParserError> {
+
+        
         if self.peek_nth_token(1) == Token::RArrow {
             let name = self.parse_identifier()?;
 
@@ -2783,6 +2785,13 @@ impl<'a> Parser<'a> {
 
             Ok(FunctionArg::Named { name, arg })
         } else {
+            // subqueries can be used in snowflake function calls without parantheses 
+            if dialect_of!(self is SnowflakeDialect) && 
+            (self.parse_keyword(Keyword::SELECT) || self.parse_keyword(Keyword::WITH))  {
+                self.prev_token();
+                let expr = Expr::Subquery(Box::new(self.parse_query()?));
+                return Ok(FunctionArg::Unnamed(expr))
+            }
             Ok(FunctionArg::Unnamed(self.parse_expr()?))
         }
     }
