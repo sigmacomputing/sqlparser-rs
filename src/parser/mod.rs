@@ -8650,7 +8650,7 @@ impl<'a> Parser<'a> {
                 arg,
                 operator: FunctionArgOperator::RightArrow,
             })
-        } else if self.peek_nth_token(1) == Token::Eq {
+        } else if dialect_of!(self is DuckDbDialect) && self.peek_nth_token(1) == Token::Eq {
             let name = self.parse_identifier(false)?;
 
             self.expect_token(&Token::Eq)?;
