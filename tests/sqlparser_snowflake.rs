@@ -1554,3 +1554,25 @@ fn parse_comma_outer_join() {
 fn test_sf_trailing_commas() {
     snowflake().verified_only_select_with_canonical("SELECT 1, 2, FROM t", "SELECT 1, 2 FROM t");
 }
+
+#[test]
+fn test_select_wildcard_with_replace() {
+    let select = snowflake_and_generic().verified_only_select(
+        r#"SELECT * REPLACE ('DEPT-' || department_id AS department_id) FROM tbl"#,
+    );
+    let expected = SelectItem::Wildcard(WildcardAdditionalOptions {
+        opt_replace: Some(ReplaceSelectItem {
+            items: vec![Box::new(ReplaceSelectElement {
+                expr: Expr::BinaryOp {
+                    left: Box::new(Expr::Value(Value::SingleQuotedString("DEPT-".to_owned()))),
+                    op: BinaryOperator::StringConcat,
+                    right: Box::new(Expr::Identifier(Ident::new("department_id"))),
+                },
+                column_name: Ident::new("department_id"),
+                as_keyword: true,
+            })],
+        }),
+        ..Default::default()
+    });
+    assert_eq!(expected, select.projection[0]);
+}
