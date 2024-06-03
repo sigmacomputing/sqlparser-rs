@@ -108,6 +108,17 @@ pub enum SetExpr {
     Table(Box<Table>),
 }
 
+impl SetExpr {
+    /// If this `SetExpr` is a `SELECT`, returns the [`Select`].
+    pub fn as_select(&self) -> Option<&Select> {
+        if let Self::Select(select) = self {
+            Some(&**select)
+        } else {
+            None
+        }
+    }
+}
+
 impl fmt::Display for SetExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -245,6 +256,11 @@ pub struct Select {
     pub named_window: Vec<NamedWindowDefinition>,
     /// QUALIFY (Snowflake)
     pub qualify: Option<Expr>,
+    /// The positioning of QUALIFY and WINDOW clauses differ between dialects.
+    /// e.g. BigQuery requires that WINDOW comes after QUALIFY, while DUCKDB accepts
+    /// WINDOW before QUALIFY.
+    /// We accept either positioning and flag the accepted variant.
+    pub window_before_qualify: bool,
     /// BigQuery syntax: `SELECT AS VALUE | SELECT AS STRUCT`
     pub value_table_mode: Option<ValueTableMode>,
     /// STARTING WITH .. CONNECT BY
@@ -310,11 +326,20 @@ impl fmt::Display for Select {
         if let Some(ref having) = self.having {
             write!(f, " HAVING {having}")?;
         }
-        if !self.named_window.is_empty() {
-            write!(f, " WINDOW {}", display_comma_separated(&self.named_window))?;
-        }
-        if let Some(ref qualify) = self.qualify {
-            write!(f, " QUALIFY {qualify}")?;
+        if self.window_before_qualify {
+            if !self.named_window.is_empty() {
+                write!(f, " WINDOW {}", display_comma_separated(&self.named_window))?;
+            }
+            if let Some(ref qualify) = self.qualify {
+                write!(f, " QUALIFY {qualify}")?;
+            }
+        } else {
+            if let Some(ref qualify) = self.qualify {
+                write!(f, " QUALIFY {qualify}")?;
+            }
+            if !self.named_window.is_empty() {
+                write!(f, " WINDOW {}", display_comma_separated(&self.named_window))?;
+            }
         }
         if let Some(ref connect_by) = self.connect_by {
             write!(f, " {connect_by}")?;
@@ -358,14 +383,56 @@ impl fmt::Display for LateralView {
     }
 }
 
+/// An expression used in a named window declaration.
+///
+/// ```sql
+/// WINDOW mywindow AS [named_window_expr]
+/// ```
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
-pub struct NamedWindowDefinition(pub Ident, pub WindowSpec);
+pub enum NamedWindowExpr {
+    /// A direct reference to another named window definition.
+    /// [BigQuery]
+    ///
+    /// Example:
+    /// ```sql
+    /// WINDOW mywindow AS prev_window
+    /// ```
+    ///
+    /// [BigQuery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/window-function-calls#ref_named_window
+    NamedWindow(Ident),
+    /// A window expression.
+    ///
+    /// Example:
+    /// ```sql
+    /// WINDOW mywindow AS (ORDER BY 1)
+    /// ```
+    WindowSpec(WindowSpec),
+}
+
+impl fmt::Display for NamedWindowExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            NamedWindowExpr::NamedWindow(named_window) => {
+                write!(f, "{named_window}")?;
+            }
+            NamedWindowExpr::WindowSpec(window_spec) => {
+                write!(f, "({window_spec})")?;
+            }
+        };
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct NamedWindowDefinition(pub Ident, pub NamedWindowExpr);
 
 impl fmt::Display for NamedWindowDefinition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} AS ({})", self.0, self.1)
+        write!(f, "{} AS {}", self.0, self.1)
     }
 }
 
@@ -760,6 +827,31 @@ impl fmt::Display for ConnectBy {
     }
 }
 
+/// An expression optionally followed by an alias.
+///
+/// Example:
+/// ```sql
+/// 42 AS myint
+/// ```
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ExprWithAlias {
+    pub expr: Expr,
+    pub alias: Option<Ident>,
+}
+
+impl fmt::Display for ExprWithAlias {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let ExprWithAlias { expr, alias } = self;
+        write!(f, "{expr}")?;
+        if let Some(alias) = alias {
+            write!(f, " AS {alias}")?;
+        }
+        Ok(())
+    }
+}
+
 /// A table name or a parenthesized subquery with an optional alias
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -863,12 +955,15 @@ pub enum TableFactor {
     },
     /// Represents PIVOT operation on a table.
     /// For example `FROM monthly_sales PIVOT(sum(amount) FOR MONTH IN ('JAN', 'FEB'))`
-    /// See <https://docs.snowflake.com/en/sql-reference/constructs/pivot>
+    ///
+    /// [BigQuery](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#pivot_operator)
+    /// [Snowflake](https://docs.snowflake.com/en/sql-reference/constructs/pivot)
     Pivot {
         table: Box<TableFactor>,
-        aggregate_function: Expr, // Function expression
+        aggregate_functions: Vec<ExprWithAlias>, // Function expression
         value_column: Vec<Ident>,
-        pivot_values: Vec<Value>,
+        value_source: PivotValueSource,
+        default_on_null: Option<Expr>,
         alias: Option<TableAlias>,
     },
     /// An UNPIVOT operation on a table.
@@ -907,6 +1002,41 @@ pub enum TableFactor {
         symbols: Vec<SymbolDefinition>,
         alias: Option<TableAlias>,
     },
+}
+
+/// The source of values in a `PIVOT` operation.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum PivotValueSource {
+    /// Pivot on a static list of values.
+    ///
+    /// See <https://docs.snowflake.com/en/sql-reference/constructs/pivot#pivot-on-a-specified-list-of-column-values-for-the-pivot-column>.
+    List(Vec<ExprWithAlias>),
+    /// Pivot on all distinct values of the pivot column.
+    ///
+    /// See <https://docs.snowflake.com/en/sql-reference/constructs/pivot#pivot-on-all-distinct-column-values-automatically-with-dynamic-pivot>.
+    Any(Vec<OrderByExpr>),
+    /// Pivot on all values returned by a subquery.
+    ///
+    /// See <https://docs.snowflake.com/en/sql-reference/constructs/pivot#pivot-on-column-values-using-a-subquery-with-dynamic-pivot>.
+    Subquery(Query),
+}
+
+impl fmt::Display for PivotValueSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PivotValueSource::List(values) => write!(f, "{}", display_comma_separated(values)),
+            PivotValueSource::Any(order_by) => {
+                write!(f, "ANY")?;
+                if !order_by.is_empty() {
+                    write!(f, " ORDER BY {}", display_comma_separated(order_by))?;
+                }
+                Ok(())
+            }
+            PivotValueSource::Subquery(query) => write!(f, "{query}"),
+        }
+    }
 }
 
 /// An item in the `MEASURES` subclause of a `MATCH_RECOGNIZE` operation.
@@ -1240,19 +1370,22 @@ impl fmt::Display for TableFactor {
             }
             TableFactor::Pivot {
                 table,
-                aggregate_function,
+                aggregate_functions,
                 value_column,
-                pivot_values,
+                value_source,
+                default_on_null,
                 alias,
             } => {
                 write!(
                     f,
-                    "{} PIVOT({} FOR {} IN ({}))",
-                    table,
-                    aggregate_function,
+                    "{table} PIVOT({} FOR {} IN ({value_source})",
+                    display_comma_separated(aggregate_functions),
                     Expr::CompoundIdentifier(value_column.to_vec()),
-                    display_comma_separated(pivot_values)
                 )?;
+                if let Some(expr) = default_on_null {
+                    write!(f, " DEFAULT ON NULL ({expr})")?;
+                }
+                write!(f, ")")?;
                 if alias.is_some() {
                     write!(f, " AS {}", alias.as_ref().unwrap())?;
                 }
@@ -1441,6 +1574,15 @@ impl fmt::Display for Join {
             ),
             JoinOperator::CrossApply => write!(f, " CROSS APPLY {}", self.relation),
             JoinOperator::OuterApply => write!(f, " OUTER APPLY {}", self.relation),
+            JoinOperator::AsOf {
+                match_condition,
+                constraint,
+            } => write!(
+                f,
+                " ASOF JOIN {} MATCH_CONDITION ({match_condition}){}",
+                self.relation,
+                suffix(constraint)
+            ),
         }
     }
 }
@@ -1466,6 +1608,14 @@ pub enum JoinOperator {
     CrossApply,
     /// OUTER APPLY (non-standard)
     OuterApply,
+    /// `ASOF` joins are used for joining tables containing time-series data
+    /// whose timestamp columns do not match exactly.
+    ///
+    /// See <https://docs.snowflake.com/en/sql-reference/constructs/asof-join>.
+    AsOf {
+        match_condition: Expr,
+        constraint: JoinConstraint,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
