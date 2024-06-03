@@ -16,8 +16,9 @@
 //! is also tested (on the inputs it can handle).
 
 use sqlparser::ast::{
-    CreateFunctionBody, CreateFunctionUsing, Expr, Function, FunctionDefinition, Ident, ObjectName,
-    SelectItem, Statement, TableFactor, UnaryOperator,
+    CreateFunctionBody, CreateFunctionUsing, Expr, Function, FunctionArgumentList,
+    FunctionArguments, Ident, ObjectName, OneOrManyWithParens, SelectItem, Statement, TableFactor,
+    UnaryOperator, Value,
 };
 use sqlparser::dialect::{GenericDialect, HiveDialect, MsSqlDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
@@ -267,12 +268,12 @@ fn set_statement_with_minus() {
         Statement::SetVariable {
             local: false,
             hivevar: false,
-            variable: ObjectName(vec![
+            variables: OneOrManyWithParens::One(ObjectName(vec![
                 Ident::new("hive"),
                 Ident::new("tez"),
                 Ident::new("java"),
                 Ident::new("opts")
-            ]),
+            ])),
             value: vec![Expr::UnaryOp {
                 op: UnaryOperator::Minus,
                 expr: Box::new(Expr::Identifier(Ident::new("Xmx4g")))
@@ -295,22 +296,23 @@ fn parse_create_function() {
         Statement::CreateFunction {
             temporary,
             name,
-            params,
+            function_body,
+            using,
             ..
         } => {
             assert!(temporary);
             assert_eq!(name.to_string(), "mydb.myfunc");
             assert_eq!(
-                params,
-                CreateFunctionBody {
-                    as_: Some(FunctionDefinition::SingleQuotedDef(
-                        "org.random.class.Name".to_string()
-                    )),
-                    using: Some(CreateFunctionUsing::Jar(
-                        "hdfs://somewhere.com:8020/very/far".to_string()
-                    )),
-                    ..Default::default()
-                }
+                function_body,
+                Some(CreateFunctionBody::AsBeforeOptions(Expr::Value(
+                    Value::SingleQuotedString("org.random.class.Name".to_string())
+                )))
+            );
+            assert_eq!(
+                using,
+                Some(CreateFunctionUsing::Jar(
+                    "hdfs://somewhere.com:8020/very/far".to_string()
+                )),
             )
         }
         _ => unreachable!(),
@@ -379,14 +381,15 @@ fn parse_delimited_identifiers() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
-            args: vec![],
+            args: FunctionArguments::List(FunctionArgumentList {
+                duplicate_treatment: None,
+                args: vec![],
+                clauses: vec![],
+            }),
             null_treatment: None,
             filter: None,
-            within_group: None,
             over: None,
-            distinct: false,
-            special: false,
-            order_by: vec![],
+            within_group: vec![],
         }),
         expr_from_projection(&select.projection[1]),
     );

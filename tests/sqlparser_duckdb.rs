@@ -177,6 +177,7 @@ fn test_select_union_by_name() {
                 sort_by: vec![],
                 having: None,
                 named_window: vec![],
+                window_before_qualify: false,
                 qualify: None,
                 value_table_mode: None,
                 connect_by: None,
@@ -214,6 +215,7 @@ fn test_select_union_by_name() {
                 sort_by: vec![],
                 having: None,
                 named_window: vec![],
+                window_before_qualify: false,
                 qualify: None,
                 value_table_mode: None,
                 connect_by: None,
@@ -486,30 +488,59 @@ fn test_duckdb_named_argument_function_with_assignment_operator() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("FUN")]),
-            args: vec![
-                FunctionArg::Named {
-                    name: Ident::new("a"),
-                    arg: FunctionArgExpr::Expr(Expr::Value(Value::SingleQuotedString(
-                        "1".to_owned()
-                    ))),
-                    operator: FunctionArgOperator::Assignment
-                },
-                FunctionArg::Named {
-                    name: Ident::new("b"),
-                    arg: FunctionArgExpr::Expr(Expr::Value(Value::SingleQuotedString(
-                        "2".to_owned()
-                    ))),
-                    operator: FunctionArgOperator::Assignment
-                },
-            ],
+            args: FunctionArguments::List(FunctionArgumentList {
+                duplicate_treatment: None,
+                args: vec![
+                    FunctionArg::Named {
+                        name: Ident::new("a"),
+                        arg: FunctionArgExpr::Expr(Expr::Value(Value::SingleQuotedString(
+                            "1".to_owned()
+                        ))),
+                        operator: FunctionArgOperator::Assignment
+                    },
+                    FunctionArg::Named {
+                        name: Ident::new("b"),
+                        arg: FunctionArgExpr::Expr(Expr::Value(Value::SingleQuotedString(
+                            "2".to_owned()
+                        ))),
+                        operator: FunctionArgOperator::Assignment
+                    },
+                ],
+                clauses: vec![],
+            }),
             null_treatment: None,
             filter: None,
             over: None,
-            distinct: false,
-            special: false,
-            order_by: vec![],
-            within_group: None
+            within_group: vec![],
         }),
         expr_from_projection(only(&select.projection))
+    );
+}
+
+#[test]
+fn test_array_index() {
+    let sql = r#"SELECT ['a', 'b', 'c'][3] AS three"#;
+    let select = duckdb().verified_only_select(sql);
+    let projection = &select.projection;
+    assert_eq!(1, projection.len());
+    let expr = match &projection[0] {
+        SelectItem::ExprWithAlias { expr, .. } => expr,
+        _ => panic!("Expected an expression with alias"),
+    };
+    assert_eq!(
+        &Expr::Subscript {
+            expr: Box::new(Expr::Array(Array {
+                elem: vec![
+                    Expr::Value(Value::SingleQuotedString("a".to_owned())),
+                    Expr::Value(Value::SingleQuotedString("b".to_owned())),
+                    Expr::Value(Value::SingleQuotedString("c".to_owned()))
+                ],
+                named: false
+            })),
+            subscript: Box::new(Subscript::Index {
+                index: Expr::Value(number("3"))
+            })
+        },
+        expr
     );
 }

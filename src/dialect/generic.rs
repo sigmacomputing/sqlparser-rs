@@ -51,7 +51,23 @@ impl Dialect for GenericDialect {
         true
     }
 
+    fn supports_window_function_null_treatment_arg(&self) -> bool {
+        true
+    }
+
     fn supports_dictionary_syntax(&self) -> bool {
+        true
+    }
+
+    fn supports_window_clause_named_window_reference(&self) -> bool {
+        true
+    }
+
+    fn supports_parenthesized_set_variables(&self) -> bool {
+        true
+    }
+
+    fn supports_select_wildcard_except(&self) -> bool {
         true
     }
 }

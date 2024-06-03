@@ -18,14 +18,30 @@ use std::ops::Deref;
 
 use sqlparser::ast::*;
 use sqlparser::dialect::{BigQueryDialect, GenericDialect};
-use sqlparser::parser::ParserError;
+use sqlparser::parser::{ParserError, ParserOptions};
 use test_utils::*;
 
 #[test]
 fn parse_literal_string() {
-    let sql = r#"SELECT 'single', "double""#;
-    let select = bigquery().verified_only_select(sql);
-    assert_eq!(2, select.projection.len());
+    let sql = concat!(
+        "SELECT ",
+        "'single', ",
+        r#""double", "#,
+        "'''triple-single''', ",
+        r#""""triple-double""", "#,
+        r#"'single\'escaped', "#,
+        r#"'''triple-single\'escaped''', "#,
+        r#"'''triple-single'unescaped''', "#,
+        r#""double\"escaped", "#,
+        r#""""triple-double\"escaped""", "#,
+        r#""""triple-double"unescaped""""#,
+    );
+    let dialect = TestedDialects {
+        dialects: vec![Box::new(BigQueryDialect {})],
+        options: Some(ParserOptions::new().with_unescape(false)),
+    };
+    let select = dialect.verified_only_select(sql);
+    assert_eq!(10, select.projection.len());
     assert_eq!(
         &Expr::Value(Value::SingleQuotedString("single".to_string())),
         expr_from_projection(&select.projection[0])
@@ -34,56 +50,162 @@ fn parse_literal_string() {
         &Expr::Value(Value::DoubleQuotedString("double".to_string())),
         expr_from_projection(&select.projection[1])
     );
+    assert_eq!(
+        &Expr::Value(Value::TripleSingleQuotedString("triple-single".to_string())),
+        expr_from_projection(&select.projection[2])
+    );
+    assert_eq!(
+        &Expr::Value(Value::TripleDoubleQuotedString("triple-double".to_string())),
+        expr_from_projection(&select.projection[3])
+    );
+    assert_eq!(
+        &Expr::Value(Value::SingleQuotedString(r#"single\'escaped"#.to_string())),
+        expr_from_projection(&select.projection[4])
+    );
+    assert_eq!(
+        &Expr::Value(Value::TripleSingleQuotedString(
+            r#"triple-single\'escaped"#.to_string()
+        )),
+        expr_from_projection(&select.projection[5])
+    );
+    assert_eq!(
+        &Expr::Value(Value::TripleSingleQuotedString(
+            r#"triple-single'unescaped"#.to_string()
+        )),
+        expr_from_projection(&select.projection[6])
+    );
+    assert_eq!(
+        &Expr::Value(Value::DoubleQuotedString(r#"double\"escaped"#.to_string())),
+        expr_from_projection(&select.projection[7])
+    );
+    assert_eq!(
+        &Expr::Value(Value::TripleDoubleQuotedString(
+            r#"triple-double\"escaped"#.to_string()
+        )),
+        expr_from_projection(&select.projection[8])
+    );
+    assert_eq!(
+        &Expr::Value(Value::TripleDoubleQuotedString(
+            r#"triple-double"unescaped"#.to_string()
+        )),
+        expr_from_projection(&select.projection[9])
+    );
 }
 
 #[test]
 fn parse_byte_literal() {
-    let sql = r#"SELECT B'abc', B"abc""#;
-    let select = bigquery().verified_only_select(sql);
-    assert_eq!(2, select.projection.len());
-    assert_eq!(
-        &Expr::Value(Value::SingleQuotedByteStringLiteral("abc".to_string())),
-        expr_from_projection(&select.projection[0])
+    let sql = concat!(
+        "SELECT ",
+        "B'abc', ",
+        r#"B"abc", "#,
+        r#"B'f\(abc,(.*),def\)', "#,
+        r#"B"f\(abc,(.*),def\)", "#,
+        r#"B'''abc''', "#,
+        r#"B"""abc""""#,
     );
-    assert_eq!(
-        &Expr::Value(Value::DoubleQuotedByteStringLiteral("abc".to_string())),
-        expr_from_projection(&select.projection[1])
-    );
+    let stmt = bigquery().verified_stmt(sql);
+    if let Statement::Query(query) = stmt {
+        if let SetExpr::Select(select) = *query.body {
+            assert_eq!(6, select.projection.len());
+            assert_eq!(
+                &Expr::Value(Value::SingleQuotedByteStringLiteral("abc".to_string())),
+                expr_from_projection(&select.projection[0])
+            );
+            assert_eq!(
+                &Expr::Value(Value::DoubleQuotedByteStringLiteral("abc".to_string())),
+                expr_from_projection(&select.projection[1])
+            );
+            assert_eq!(
+                &Expr::Value(Value::SingleQuotedByteStringLiteral(
+                    r"f\(abc,(.*),def\)".to_string()
+                )),
+                expr_from_projection(&select.projection[2])
+            );
+            assert_eq!(
+                &Expr::Value(Value::DoubleQuotedByteStringLiteral(
+                    r"f\(abc,(.*),def\)".to_string()
+                )),
+                expr_from_projection(&select.projection[3])
+            );
+            assert_eq!(
+                &Expr::Value(Value::TripleSingleQuotedByteStringLiteral(
+                    r"abc".to_string()
+                )),
+                expr_from_projection(&select.projection[4])
+            );
+            assert_eq!(
+                &Expr::Value(Value::TripleDoubleQuotedByteStringLiteral(
+                    r"abc".to_string()
+                )),
+                expr_from_projection(&select.projection[5])
+            );
+        }
+    } else {
+        panic!("invalid query");
+    }
 
-    let sql = r#"SELECT b'abc', b"abc""#;
-    bigquery().one_statement_parses_to(sql, r#"SELECT B'abc', B"abc""#);
+    bigquery().one_statement_parses_to(
+        r#"SELECT b'123', b"123", b'''123''', b"""123""""#,
+        r#"SELECT B'123', B"123", B'''123''', B"""123""""#,
+    );
 }
 
 #[test]
 fn parse_raw_literal() {
-    let sql = r#"SELECT R'abc', R"abc", R'f\(abc,(.*),def\)', R"f\(abc,(.*),def\)""#;
-    let stmt = bigquery().one_statement_parses_to(
-        sql,
-        r"SELECT R'abc', R'abc', R'f\(abc,(.*),def\)', R'f\(abc,(.*),def\)'",
+    let sql = concat!(
+        "SELECT ",
+        "R'abc', ",
+        r#"R"abc", "#,
+        r#"R'f\(abc,(.*),def\)', "#,
+        r#"R"f\(abc,(.*),def\)", "#,
+        r#"R'''abc''', "#,
+        r#"R"""abc""""#,
     );
+    let stmt = bigquery().verified_stmt(sql);
     if let Statement::Query(query) = stmt {
         if let SetExpr::Select(select) = *query.body {
-            assert_eq!(4, select.projection.len());
+            assert_eq!(6, select.projection.len());
             assert_eq!(
-                &Expr::Value(Value::RawStringLiteral("abc".to_string())),
+                &Expr::Value(Value::SingleQuotedRawStringLiteral("abc".to_string())),
                 expr_from_projection(&select.projection[0])
             );
             assert_eq!(
-                &Expr::Value(Value::RawStringLiteral("abc".to_string())),
+                &Expr::Value(Value::DoubleQuotedRawStringLiteral("abc".to_string())),
                 expr_from_projection(&select.projection[1])
             );
             assert_eq!(
-                &Expr::Value(Value::RawStringLiteral(r"f\(abc,(.*),def\)".to_string())),
+                &Expr::Value(Value::SingleQuotedRawStringLiteral(
+                    r"f\(abc,(.*),def\)".to_string()
+                )),
                 expr_from_projection(&select.projection[2])
             );
             assert_eq!(
-                &Expr::Value(Value::RawStringLiteral(r"f\(abc,(.*),def\)".to_string())),
+                &Expr::Value(Value::DoubleQuotedRawStringLiteral(
+                    r"f\(abc,(.*),def\)".to_string()
+                )),
                 expr_from_projection(&select.projection[3])
             );
-            return;
+            assert_eq!(
+                &Expr::Value(Value::TripleSingleQuotedRawStringLiteral(
+                    r"abc".to_string()
+                )),
+                expr_from_projection(&select.projection[4])
+            );
+            assert_eq!(
+                &Expr::Value(Value::TripleDoubleQuotedRawStringLiteral(
+                    r"abc".to_string()
+                )),
+                expr_from_projection(&select.projection[5])
+            );
         }
+    } else {
+        panic!("invalid query");
     }
-    panic!("invalid query")
+
+    bigquery().one_statement_parses_to(
+        r#"SELECT r'123', r"123", r'''123''', r"""123""""#,
+        r#"SELECT R'123', R"123", R'''123''', R"""123""""#,
+    );
 }
 
 #[test]
@@ -139,10 +261,12 @@ fn parse_create_view_with_options() {
                 vec![
                     ViewColumnDef {
                         name: Ident::new("name"),
+                        data_type: None,
                         options: None,
                     },
                     ViewColumnDef {
                         name: Ident::new("age"),
+                        data_type: None,
                         options: Some(vec![SqlOption {
                             name: Ident::new("description"),
                             value: Expr::Value(Value::DoubleQuotedString("field age".to_string())),
@@ -187,6 +311,7 @@ fn parse_create_view_if_not_exists() {
             materialized,
             options,
             cluster_by,
+            comment,
             with_no_schema_binding: late_binding,
             if_not_exists,
             temporary,
@@ -198,6 +323,7 @@ fn parse_create_view_if_not_exists() {
             assert!(!or_replace);
             assert_eq!(options, CreateTableOptions::None);
             assert_eq!(cluster_by, vec![]);
+            assert!(comment.is_none());
             assert!(!late_binding);
             assert!(if_not_exists);
             assert!(!temporary);
@@ -350,7 +476,7 @@ fn parse_create_table_with_options() {
 #[test]
 fn parse_nested_data_types() {
     let sql = "CREATE TABLE table (x STRUCT<a ARRAY<INT64>, b BYTES(42)>, y ARRAY<STRUCT<INT64>>)";
-    match bigquery().one_statement_parses_to(sql, sql) {
+    match bigquery_and_generic().one_statement_parses_to(sql, sql) {
         Statement::CreateTable { name, columns, .. } => {
             assert_eq!(name, ObjectName(vec!["table".into()]));
             assert_eq!(
@@ -395,19 +521,25 @@ fn parse_nested_data_types() {
 fn parse_invalid_brackets() {
     let sql = "SELECT STRUCT<INT64>>(NULL)";
     assert_eq!(
-        bigquery().parse_sql_statements(sql).unwrap_err(),
+        bigquery_and_generic()
+            .parse_sql_statements(sql)
+            .unwrap_err(),
         ParserError::ParserError("unmatched > in STRUCT literal".to_string())
     );
 
     let sql = "SELECT STRUCT<STRUCT<INT64>>>(NULL)";
     assert_eq!(
-        bigquery().parse_sql_statements(sql).unwrap_err(),
+        bigquery_and_generic()
+            .parse_sql_statements(sql)
+            .unwrap_err(),
         ParserError::ParserError("Expected (, found: >".to_string())
     );
 
     let sql = "CREATE TABLE table (x STRUCT<STRUCT<INT64>>>)";
     assert_eq!(
-        bigquery().parse_sql_statements(sql).unwrap_err(),
+        bigquery_and_generic()
+            .parse_sql_statements(sql)
+            .unwrap_err(),
         ParserError::ParserError(
             "Expected ',' or ')' after column definition, found: >".to_string()
         )
@@ -445,7 +577,7 @@ fn parse_typeless_struct_syntax() {
     // typeless struct syntax https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#typeless_struct_syntax
     // syntax: STRUCT( expr1 [AS field_name] [, ... ])
     let sql = "SELECT STRUCT(1, 2, 3), STRUCT('abc'), STRUCT(1, t.str_col), STRUCT(1 AS a, 'abc' AS b), STRUCT(str_col AS abc)";
-    let select = bigquery().verified_only_select(sql);
+    let select = bigquery_and_generic().verified_only_select(sql);
     assert_eq!(5, select.projection.len());
     assert_eq!(
         &Expr::Struct {
@@ -505,7 +637,7 @@ fn parse_typeless_struct_syntax() {
 }
 
 #[test]
-fn parse_typed_struct_syntax() {
+fn parse_typed_struct_syntax_bigquery() {
     // typed struct syntax https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#typed_struct_syntax
     // syntax: STRUCT<[field_name] field_type, ...>( expr1 [, ... ])
 
@@ -786,10 +918,315 @@ fn parse_typed_struct_syntax() {
         },
         expr_from_projection(&select.projection[1])
     );
+
+    // Keywords in the parser may be used as field names.
+    let sql = r#"SELECT STRUCT<key INT64, value INT64>(1, 2)"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(1, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("1")), Expr::Value(number("2")),],
+            fields: vec![
+                StructField {
+                    field_name: Some("key".into()),
+                    field_type: DataType::Int64,
+                },
+                StructField {
+                    field_name: Some("value".into()),
+                    field_type: DataType::Int64,
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[0])
+    );
 }
 
 #[test]
-fn parse_typed_struct_with_field_name() {
+fn parse_typed_struct_syntax_bigquery_and_generic() {
+    // typed struct syntax https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#typed_struct_syntax
+    // syntax: STRUCT<[field_name] field_type, ...>( expr1 [, ... ])
+
+    let sql = r#"SELECT STRUCT<INT64>(5), STRUCT<x INT64, y STRING>(1, t.str_col), STRUCT<arr ARRAY<FLOAT64>, str STRUCT<BOOL>>(nested_col)"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(3, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Int64,
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::CompoundIdentifier(vec![
+                    Ident {
+                        value: "t".into(),
+                        quote_style: None,
+                    },
+                    Ident {
+                        value: "str_col".into(),
+                        quote_style: None,
+                    },
+                ]),
+            ],
+            fields: vec![
+                StructField {
+                    field_name: Some(Ident {
+                        value: "x".into(),
+                        quote_style: None,
+                    }),
+                    field_type: DataType::Int64
+                },
+                StructField {
+                    field_name: Some(Ident {
+                        value: "y".into(),
+                        quote_style: None,
+                    }),
+                    field_type: DataType::String(None)
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Identifier(Ident {
+                value: "nested_col".into(),
+                quote_style: None,
+            }),],
+            fields: vec![
+                StructField {
+                    field_name: Some("arr".into()),
+                    field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
+                        DataType::Float64
+                    )))
+                },
+                StructField {
+                    field_name: Some("str".into()),
+                    field_type: DataType::Struct(vec![StructField {
+                        field_name: None,
+                        field_type: DataType::Bool
+                    }])
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+
+    let sql = r#"SELECT STRUCT<x STRUCT, y ARRAY<STRUCT>>(nested_col)"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(1, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Identifier(Ident {
+                value: "nested_col".into(),
+                quote_style: None,
+            }),],
+            fields: vec![
+                StructField {
+                    field_name: Some("x".into()),
+                    field_type: DataType::Struct(Default::default())
+                },
+                StructField {
+                    field_name: Some("y".into()),
+                    field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
+                        DataType::Struct(Default::default())
+                    )))
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+
+    let sql = r#"SELECT STRUCT<BOOL>(true), STRUCT<BYTES(42)>(B'abc')"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::Boolean(true)),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Bool
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedByteStringLiteral(
+                "abc".into()
+            )),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Bytes(Some(42))
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    let sql = r#"SELECT STRUCT<DATE>('2011-05-05'), STRUCT<DATETIME>(DATETIME '1999-01-01 01:23:34.45'), STRUCT<FLOAT64>(5.0), STRUCT<INT64>(1)"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(4, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedString(
+                "2011-05-05".to_string()
+            )),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Date
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Datetime(None),
+                value: "1999-01-01 01:23:34.45".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Datetime(None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5.0")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Float64
+            }]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("1")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Int64
+            }]
+        },
+        expr_from_projection(&select.projection[3])
+    );
+
+    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '1-2 3 4:5:6.789999'), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Interval(ast::Interval {
+                value: Box::new(Expr::Value(Value::SingleQuotedString(
+                    "1-2 3 4:5:6.789999".to_string()
+                ))),
+                leading_field: None,
+                leading_precision: None,
+                last_field: None,
+                fractional_seconds_precision: None
+            }),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Interval
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::JSON,
+                value: r#"{"class" : {"students" : [{"name" : "Jane"}]}}"#.to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::JSON
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    let sql = r#"SELECT STRUCT<STRING(42)>('foo'), STRUCT<TIMESTAMP>(TIMESTAMP '2008-12-25 15:30:00 America/Los_Angeles'), STRUCT<TIME>(TIME '15:30:00')"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(3, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedString("foo".to_string())),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::String(Some(42))
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Timestamp(None, TimezoneInfo::None),
+                value: "2008-12-25 15:30:00 America/Los_Angeles".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Timestamp(None, TimezoneInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Time(None, TimezoneInfo::None),
+                value: "15:30:00".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Time(None, TimezoneInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+
+    let sql = r#"SELECT STRUCT<NUMERIC>(NUMERIC '1'), STRUCT<BIGNUMERIC>(BIGNUMERIC '1')"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Numeric(ExactNumberInfo::None),
+                value: "1".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Numeric(ExactNumberInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::BigNumeric(ExactNumberInfo::None),
+                value: "1".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::BigNumeric(ExactNumberInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+}
+
+#[test]
+fn parse_typed_struct_with_field_name_bigquery() {
     let sql = r#"SELECT STRUCT<x INT64>(5), STRUCT<y STRING>("foo")"#;
     let select = bigquery().verified_only_select(sql);
     assert_eq!(2, select.projection.len());
@@ -816,6 +1253,53 @@ fn parse_typed_struct_with_field_name() {
 
     let sql = r#"SELECT STRUCT<x INT64, y INT64>(5, 5)"#;
     let select = bigquery().verified_only_select(sql);
+    assert_eq!(1, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5")), Expr::Value(number("5")),],
+            fields: vec![
+                StructField {
+                    field_name: Some(Ident::from("x")),
+                    field_type: DataType::Int64
+                },
+                StructField {
+                    field_name: Some(Ident::from("y")),
+                    field_type: DataType::Int64
+                }
+            ]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+}
+
+#[test]
+fn parse_typed_struct_with_field_name_bigquery_and_generic() {
+    let sql = r#"SELECT STRUCT<x INT64>(5), STRUCT<y STRING>('foo')"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5")),],
+            fields: vec![StructField {
+                field_name: Some(Ident::from("x")),
+                field_type: DataType::Int64
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedString("foo".to_string())),],
+            fields: vec![StructField {
+                field_name: Some(Ident::from("y")),
+                field_type: DataType::String(None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    let sql = r#"SELECT STRUCT<x INT64, y INT64>(5, 5)"#;
+    let select = bigquery_and_generic().verified_only_select(sql);
     assert_eq!(1, select.projection.len());
     assert_eq!(
         &Expr::Struct {
@@ -1359,38 +1843,6 @@ fn parse_array_agg_func() {
 }
 
 #[test]
-fn test_select_wildcard_with_except() {
-    let select = bigquery_and_generic().verified_only_select("SELECT * EXCEPT (col_a) FROM data");
-    let expected = SelectItem::Wildcard(WildcardAdditionalOptions {
-        opt_except: Some(ExceptSelectItem {
-            first_element: Ident::new("col_a"),
-            additional_elements: vec![],
-        }),
-        ..Default::default()
-    });
-    assert_eq!(expected, select.projection[0]);
-
-    let select = bigquery_and_generic()
-        .verified_only_select("SELECT * EXCEPT (department_id, employee_id) FROM employee_table");
-    let expected = SelectItem::Wildcard(WildcardAdditionalOptions {
-        opt_except: Some(ExceptSelectItem {
-            first_element: Ident::new("department_id"),
-            additional_elements: vec![Ident::new("employee_id")],
-        }),
-        ..Default::default()
-    });
-    assert_eq!(expected, select.projection[0]);
-
-    assert_eq!(
-        bigquery_and_generic()
-            .parse_sql_statements("SELECT * EXCEPT () FROM employee_table")
-            .unwrap_err()
-            .to_string(),
-        "sql parser error: Expected identifier, found: )"
-    );
-}
-
-#[test]
 fn parse_big_query_declare() {
     for (sql, expected_names, expected_data_type, expected_assigned_expr) in [
         (
@@ -1487,19 +1939,7 @@ fn parse_map_access_expr() {
                 MapAccessSyntax::Bracket,
             ),
             map_access_key(
-                Expr::Function(Function {
-                    name: ObjectName(vec![Ident::new("safe_offset")]),
-                    args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(
-                        number("2"),
-                    )))],
-                    filter: None,
-                    null_treatment: None,
-                    over: None,
-                    distinct: false,
-                    special: false,
-                    order_by: vec![],
-                    within_group: None,
-                }),
+                call("safe_offset", [Expr::Value(number("2"))]),
                 MapAccessSyntax::Bracket,
             ),
             map_access_key(
@@ -1512,6 +1952,145 @@ fn parse_map_access_expr() {
 
     let sql = "SELECT myfunc()[-1].a[SAFE_OFFSET(2)].b";
     bigquery().verified_only_select(sql);
+}
+
+#[test]
+fn test_bigquery_create_function() {
+    let sql = concat!(
+        "CREATE OR REPLACE TEMPORARY FUNCTION ",
+        "project1.mydataset.myfunction(x FLOAT64) ",
+        "RETURNS FLOAT64 ",
+        "OPTIONS(x = 'y') ",
+        "AS 42"
+    );
+
+    let stmt = bigquery().verified_stmt(sql);
+    assert_eq!(
+        stmt,
+        Statement::CreateFunction {
+            or_replace: true,
+            temporary: true,
+            if_not_exists: false,
+            name: ObjectName(vec![
+                Ident::new("project1"),
+                Ident::new("mydataset"),
+                Ident::new("myfunction"),
+            ]),
+            args: Some(vec![OperateFunctionArg::with_name("x", DataType::Float64),]),
+            return_type: Some(DataType::Float64),
+            function_body: Some(CreateFunctionBody::AsAfterOptions(Expr::Value(number(
+                "42"
+            )))),
+            options: Some(vec![SqlOption {
+                name: Ident::new("x"),
+                value: Expr::Value(Value::SingleQuotedString("y".into())),
+            }]),
+            behavior: None,
+            using: None,
+            language: None,
+            determinism_specifier: None,
+            remote_connection: None,
+            called_on_null: None,
+            parallel: None,
+        }
+    );
+
+    let sqls = [
+        // Arbitrary Options expressions.
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "RETURNS ARRAY<FLOAT64> ",
+            "OPTIONS(a = [1, 2], b = 'two', c = [('k1', 'v1'), ('k2', 'v2')]) ",
+            "AS ((SELECT 1 FROM mytable))"
+        ),
+        // Options after body.
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "RETURNS ARRAY<FLOAT64> ",
+            "AS ((SELECT 1 FROM mytable)) ",
+            "OPTIONS(a = [1, 2], b = 'two', c = [('k1', 'v1'), ('k2', 'v2')])",
+        ),
+        // IF NOT EXISTS
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION IF NOT EXISTS ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "RETURNS ARRAY<FLOAT64> ",
+            "OPTIONS(a = [1, 2]) ",
+            "AS ((SELECT 1 FROM mytable))"
+        ),
+        // No return type.
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "OPTIONS(a = [1, 2]) ",
+            "AS ((SELECT 1 FROM mytable))"
+        ),
+        // With language - body after options
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "DETERMINISTIC ",
+            "LANGUAGE js ",
+            "OPTIONS(a = [1, 2]) ",
+            "AS \"console.log('hello');\""
+        ),
+        // With language - body before options
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "NOT DETERMINISTIC ",
+            "LANGUAGE js ",
+            "AS \"console.log('hello');\" ",
+            "OPTIONS(a = [1, 2])",
+        ),
+        // Remote
+        concat!(
+            "CREATE OR REPLACE TEMPORARY FUNCTION ",
+            "myfunction(a FLOAT64, b INT64, c STRING) ",
+            "RETURNS INT64 ",
+            "REMOTE WITH CONNECTION us.myconnection ",
+            "OPTIONS(a = [1, 2])",
+        ),
+    ];
+    for sql in sqls {
+        bigquery().verified_stmt(sql);
+    }
+
+    let error_sqls = [
+        (
+            concat!(
+                "CREATE TEMPORARY FUNCTION myfunction() ",
+                "OPTIONS(a = [1, 2]) ",
+                "AS ((SELECT 1 FROM mytable)) ",
+                "OPTIONS(a = [1, 2])",
+            ),
+            "Expected end of statement, found: OPTIONS",
+        ),
+        (
+            concat!(
+                "CREATE TEMPORARY FUNCTION myfunction() ",
+                "IMMUTABLE ",
+                "AS ((SELECT 1 FROM mytable)) ",
+            ),
+            "Expected AS, found: IMMUTABLE",
+        ),
+        (
+            concat!(
+                "CREATE TEMPORARY FUNCTION myfunction() ",
+                "AS \"console.log('hello');\" ",
+                "LANGUAGE js ",
+            ),
+            "Expected end of statement, found: LANGUAGE",
+        ),
+    ];
+    for (sql, error) in error_sqls {
+        assert_eq!(
+            ParserError::ParserError(error.to_owned()),
+            bigquery().parse_sql_statements(sql).unwrap_err()
+        );
+    }
 }
 
 #[test]
@@ -1566,4 +2145,25 @@ fn test_select_as_value() {
     );
     let select = bigquery().verified_only_select("SELECT AS VALUE STRUCT(1 AS a, 2 AS b) AS xyz");
     assert_eq!(Some(ValueTableMode::AsValue), select.value_table_mode);
+}
+
+#[test]
+fn test_array_agg() {
+    bigquery_and_generic().verified_expr("ARRAY_AGG(state)");
+    bigquery_and_generic().verified_expr("ARRAY_CONCAT_AGG(x LIMIT 2)");
+    bigquery_and_generic().verified_expr("ARRAY_AGG(state IGNORE NULLS LIMIT 10)");
+    bigquery_and_generic().verified_expr("ARRAY_AGG(state RESPECT NULLS ORDER BY population)");
+    bigquery_and_generic()
+        .verified_expr("ARRAY_AGG(DISTINCT state IGNORE NULLS ORDER BY population DESC LIMIT 10)");
+    bigquery_and_generic().verified_expr("ARRAY_CONCAT_AGG(x ORDER BY ARRAY_LENGTH(x))");
+}
+
+#[test]
+fn test_any_value() {
+    bigquery_and_generic().verified_expr("ANY_VALUE(fruit)");
+    bigquery_and_generic().verified_expr(
+        "ANY_VALUE(fruit) OVER (ORDER BY LENGTH(fruit) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+    );
+    bigquery_and_generic().verified_expr("ANY_VALUE(fruit HAVING MAX sold)");
+    bigquery_and_generic().verified_expr("ANY_VALUE(fruit HAVING MIN sold)");
 }
