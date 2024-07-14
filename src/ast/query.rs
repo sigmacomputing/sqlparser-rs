@@ -50,6 +50,15 @@ pub struct Query {
     /// `FOR JSON { AUTO | PATH } [ , INCLUDE_NULL_VALUES ]`
     /// (MSSQL-specific)
     pub for_clause: Option<ForClause>,
+    /// ClickHouse syntax: `SELECT * FROM t SETTINGS key1 = value1, key2 = value2`
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select#settings-in-select-query)
+    pub settings: Option<Vec<Setting>>,
+    /// `SELECT * FROM t FORMAT JSONCompact`
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/format)
+    /// (ClickHouse-specific)
+    pub format_clause: Option<FormatClause>,
 }
 
 impl fmt::Display for Query {
@@ -70,6 +79,9 @@ impl fmt::Display for Query {
         if !self.limit_by.is_empty() {
             write!(f, " BY {}", display_separated(&self.limit_by, ", "))?;
         }
+        if let Some(ref settings) = self.settings {
+            write!(f, " SETTINGS {}", display_comma_separated(settings))?;
+        }
         if let Some(ref fetch) = self.fetch {
             write!(f, " {fetch}")?;
         }
@@ -78,6 +90,9 @@ impl fmt::Display for Query {
         }
         if let Some(ref for_clause) = self.for_clause {
             write!(f, " {}", for_clause)?;
+        }
+        if let Some(ref format) = self.format_clause {
+            write!(f, " {}", format)?;
         }
         Ok(())
     }
@@ -240,6 +255,11 @@ pub struct Select {
     pub from: Vec<TableWithJoins>,
     /// LATERAL VIEWs
     pub lateral_views: Vec<LateralView>,
+    /// ClickHouse syntax: `PREWHERE a = 1 WHERE b = 2`,
+    /// and it can be used together with WHERE selection.
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/prewhere)
+    pub prewhere: Option<Expr>,
     /// WHERE
     pub selection: Option<Expr>,
     /// GROUP BY
@@ -295,14 +315,17 @@ impl fmt::Display for Select {
                 write!(f, "{lv}")?;
             }
         }
+        if let Some(ref prewhere) = self.prewhere {
+            write!(f, " PREWHERE {prewhere}")?;
+        }
         if let Some(ref selection) = self.selection {
             write!(f, " WHERE {selection}")?;
         }
         match &self.group_by {
-            GroupByExpr::All => write!(f, " GROUP BY ALL")?,
-            GroupByExpr::Expressions(exprs) => {
+            GroupByExpr::All(_) => write!(f, " {}", self.group_by)?,
+            GroupByExpr::Expressions(exprs, _) => {
                 if !exprs.is_empty() {
-                    write!(f, " GROUP BY {}", display_comma_separated(exprs))?;
+                    write!(f, " {}", self.group_by)?
                 }
             }
         }
@@ -547,19 +570,20 @@ impl fmt::Display for IdentWithAlias {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct WildcardAdditionalOptions {
     /// `[ILIKE...]`.
-    /// Snowflake syntax: <https://docs.snowflake.com/en/sql-reference/sql/select>
+    ///  Snowflake syntax: <https://docs.snowflake.com/en/sql-reference/sql/select#parameters>
     pub opt_ilike: Option<IlikeSelectItem>,
     /// `[EXCLUDE...]`.
     pub opt_exclude: Option<ExcludeSelectItem>,
     /// `[EXCEPT...]`.
     ///  Clickhouse syntax: <https://clickhouse.com/docs/en/sql-reference/statements/select#except>
     pub opt_except: Option<ExceptSelectItem>,
-    /// `[RENAME ...]`.
-    pub opt_rename: Option<RenameSelectItem>,
     /// `[REPLACE]`
     ///  BigQuery syntax: <https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#select_replace>
     ///  Clickhouse syntax: <https://clickhouse.com/docs/en/sql-reference/statements/select#replace>
+    ///  Snowflake syntax: <https://docs.snowflake.com/en/sql-reference/sql/select#parameters>
     pub opt_replace: Option<ReplaceSelectItem>,
+    /// `[RENAME ...]`.
+    pub opt_rename: Option<RenameSelectItem>,
 }
 
 impl fmt::Display for WildcardAdditionalOptions {
@@ -573,11 +597,11 @@ impl fmt::Display for WildcardAdditionalOptions {
         if let Some(except) = &self.opt_except {
             write!(f, " {except}")?;
         }
-        if let Some(rename) = &self.opt_rename {
-            write!(f, " {rename}")?;
-        }
         if let Some(replace) = &self.opt_replace {
             write!(f, " {replace}")?;
+        }
+        if let Some(rename) = &self.opt_rename {
+            write!(f, " {rename}")?;
         }
         Ok(())
     }
@@ -824,6 +848,20 @@ impl fmt::Display for ConnectBy {
             condition = self.condition,
             relationships = display_comma_separated(&self.relationships)
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct Setting {
+    pub key: Ident,
+    pub value: Value,
+}
+
+impl fmt::Display for Setting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} = {}", self.key, self.value)
     }
 }
 
@@ -1877,28 +1915,86 @@ impl fmt::Display for SelectInto {
     }
 }
 
+/// ClickHouse supports GROUP BY WITH modifiers(includes ROLLUP|CUBE|TOTALS).
+/// e.g. GROUP BY year WITH ROLLUP WITH TOTALS
+///
+/// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#rollup-modifier>
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum GroupByWithModifier {
+    Rollup,
+    Cube,
+    Totals,
+}
+
+impl fmt::Display for GroupByWithModifier {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            GroupByWithModifier::Rollup => write!(f, "WITH ROLLUP"),
+            GroupByWithModifier::Cube => write!(f, "WITH CUBE"),
+            GroupByWithModifier::Totals => write!(f, "WITH TOTALS"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum GroupByExpr {
-    /// ALL syntax of [Snowflake], and [DuckDB]
+    /// ALL syntax of [Snowflake], [DuckDB] and [ClickHouse].
     ///
     /// [Snowflake]: <https://docs.snowflake.com/en/sql-reference/constructs/group-by#label-group-by-all-columns>
     /// [DuckDB]:  <https://duckdb.org/docs/sql/query_syntax/groupby.html>
-    All,
+    /// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#group-by-all>
+    ///
+    /// ClickHouse also supports WITH modifiers after GROUP BY ALL and expressions.
+    ///
+    /// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#rollup-modifier>
+    All(Vec<GroupByWithModifier>),
 
     /// Expressions
-    Expressions(Vec<Expr>),
+    Expressions(Vec<Expr>, Vec<GroupByWithModifier>),
 }
 
 impl fmt::Display for GroupByExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GroupByExpr::All => write!(f, "GROUP BY ALL"),
-            GroupByExpr::Expressions(col_names) => {
-                let col_names = display_comma_separated(col_names);
-                write!(f, "GROUP BY ({col_names})")
+            GroupByExpr::All(modifiers) => {
+                write!(f, "GROUP BY ALL")?;
+                if !modifiers.is_empty() {
+                    write!(f, " {}", display_separated(modifiers, " "))?;
+                }
+                Ok(())
             }
+            GroupByExpr::Expressions(col_names, modifiers) => {
+                let col_names = display_comma_separated(col_names);
+                write!(f, "GROUP BY {col_names}")?;
+                if !modifiers.is_empty() {
+                    write!(f, " {}", display_separated(modifiers, " "))?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// FORMAT identifier or FORMAT NULL clause, specific to ClickHouse.
+///
+/// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/format>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum FormatClause {
+    Identifier(Ident),
+    Null,
+}
+
+impl fmt::Display for FormatClause {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FormatClause::Identifier(ident) => write!(f, "FORMAT {}", ident),
+            FormatClause::Null => write!(f, "FORMAT NULL"),
         }
     }
 }
