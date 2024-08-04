@@ -10284,6 +10284,8 @@ fn test_map_syntax() {
             }),
         },
     );
+
+    check("MAP {}", Expr::Map(Map { entries: vec![] }));
 }
 
 #[test]
