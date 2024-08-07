@@ -6446,7 +6446,7 @@ impl<'a> Parser<'a> {
         } else if dialect_of!(self is PostgreSqlDialect | GenericDialect)
             && self.parse_keywords(&[Keyword::OWNER, Keyword::TO])
         {
-            let new_owner = match self.parse_one_of_keywords( &[Keyword::CURRENT_USER, Keyword::CURRENT_ROLE, Keyword::SESSION_USER]) {
+            let new_owner = match self.parse_one_of_keywords(&[Keyword::CURRENT_USER, Keyword::CURRENT_ROLE, Keyword::SESSION_USER]) {
                 Some(Keyword::CURRENT_USER) => Owner::CurrentUser,
                 Some(Keyword::CURRENT_ROLE) => Owner::CurrentRole,
                 Some(Keyword::SESSION_USER) => Owner::SessionUser,
@@ -6462,6 +6462,18 @@ impl<'a> Parser<'a> {
             };
 
             AlterTableOperation::OwnerTo { new_owner }
+        } else if dialect_of!(self is ClickHouseDialect|GenericDialect)
+            && self.parse_keyword(Keyword::ATTACH)
+        {
+            AlterTableOperation::AttachPartition {
+                partition: self.parse_part_or_partition()?,
+            }
+        } else if dialect_of!(self is ClickHouseDialect|GenericDialect)
+            && self.parse_keyword(Keyword::DETACH)
+        {
+            AlterTableOperation::DetachPartition {
+                partition: self.parse_part_or_partition()?,
+            }
         } else {
             let options: Vec<SqlOption> =
                 self.parse_options_with_keywords(&[Keyword::SET, Keyword::TBLPROPERTIES])?;
@@ -6477,6 +6489,16 @@ impl<'a> Parser<'a> {
             }
         };
         Ok(operation)
+    }
+
+    fn parse_part_or_partition(&mut self) -> Result<Partition, ParserError> {
+        let keyword = self.expect_one_of_keywords(&[Keyword::PART, Keyword::PARTITION])?;
+        match keyword {
+            Keyword::PART => Ok(Partition::Part(self.parse_expr()?)),
+            Keyword::PARTITION => Ok(Partition::Expr(self.parse_expr()?)),
+            // unreachable because expect_one_of_keywords used above
+            _ => unreachable!(),
+        }
     }
 
     pub fn parse_alter(&mut self) -> Result<Statement, ParserError> {
