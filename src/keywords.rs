@@ -764,6 +764,7 @@ define_keywords!(
     UNBOUNDED,
     UNCACHE,
     UNCOMMITTED,
+    UNFREEZE,
     UNION,
     UNIQUE,
     UNKNOWN,
