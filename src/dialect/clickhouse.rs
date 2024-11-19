@@ -33,4 +33,12 @@ impl Dialect for ClickHouseDialect {
     fn supports_select_wildcard_except(&self) -> bool {
         true
     }
+
+    fn describe_requires_table_keyword(&self) -> bool {
+        true
+    }
+
+    fn require_interval_qualifier(&self) -> bool {
+        true
+    }
 }

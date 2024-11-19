@@ -64,6 +64,7 @@ fn parse_table_time_travel() {
                     Value::SingleQuotedString(version)
                 ))),
                 partitions: vec![],
+                with_ordinality: false,
             },
             joins: vec![]
         },]
@@ -102,7 +103,7 @@ fn parse_create_procedure() {
                 fetch: None,
                 locks: vec![],
                 for_clause: None,
-                order_by: vec![],
+                order_by: None,
                 settings: None,
                 format_clause: None,
                 body: Box::new(SetExpr::Select(Box::new(Select {
@@ -335,6 +336,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
+            with_ordinality: _,
             partitions: _,
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
@@ -526,6 +528,7 @@ fn parse_substring_in_select() {
                                 with_hints: vec![],
                                 version: None,
                                 partitions: vec![],
+                                with_ordinality: false,
                             },
                             joins: vec![]
                         }],
@@ -543,7 +546,7 @@ fn parse_substring_in_select() {
                         value_table_mode: None,
                         connect_by: None,
                     }))),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -616,6 +619,293 @@ fn parse_mssql_declare() {
         }],
         ast
     );
+}
+
+#[test]
+fn parse_use() {
+    let valid_object_names = [
+        "mydb",
+        "SCHEMA",
+        "DATABASE",
+        "CATALOG",
+        "WAREHOUSE",
+        "DEFAULT",
+    ];
+    let quote_styles = ['\'', '"'];
+    for object_name in &valid_object_names {
+        // Test single identifier without quotes
+        assert_eq!(
+            ms().verified_stmt(&format!("USE {}", object_name)),
+            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+                object_name.to_string()
+            )])))
+        );
+        for &quote in &quote_styles {
+            // Test single identifier with different type of quotes
+            assert_eq!(
+                ms().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                    quote,
+                    object_name.to_string(),
+                )])))
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_create_table_with_valid_options() {
+    let options = [
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (DISTRIBUTION = ROUND_ROBIN, PARTITION (column_a RANGE FOR VALUES (10, 11)))",
+            vec![
+                SqlOption::KeyValue {
+                    key: Ident {
+                        value: "DISTRIBUTION".to_string(),
+                        quote_style: None,
+                    },
+                    value: Expr::Identifier(Ident {
+                        value: "ROUND_ROBIN".to_string(),
+                        quote_style: None,
+                    })
+                },
+                SqlOption::Partition {
+                    column_name: "column_a".into(),
+                    range_direction: None,
+                    for_values: vec![Expr::Value(test_utils::number("10")), Expr::Value(test_utils::number("11"))] ,
+                },
+            ],
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (PARTITION (column_a RANGE LEFT FOR VALUES (10, 11)))",
+            vec![
+                SqlOption::Partition {
+                        column_name: "column_a".into(),
+                        range_direction: Some(PartitionRangeDirection::Left),
+                        for_values: vec![
+                            Expr::Value(test_utils::number("10")),
+                            Expr::Value(test_utils::number("11")),
+                        ],
+                    }
+            ],
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (CLUSTERED COLUMNSTORE INDEX)",
+            vec![SqlOption::Clustered(TableOptionsClustered::ColumnstoreIndex)],
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (CLUSTERED COLUMNSTORE INDEX ORDER (column_a, column_b))",
+            vec![
+                SqlOption::Clustered(TableOptionsClustered::ColumnstoreIndexOrder(vec![
+                    "column_a".into(),
+                    "column_b".into(),
+                ]))
+            ],
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (CLUSTERED INDEX (column_a ASC, column_b DESC, column_c))",
+            vec![
+                SqlOption::Clustered(TableOptionsClustered::Index(vec![
+                        ClusteredIndex {
+                            name: Ident {
+                                value: "column_a".to_string(),
+                                quote_style: None,
+                            },
+                            asc: Some(true),
+                        },
+                        ClusteredIndex {
+                            name: Ident {
+                                value: "column_b".to_string(),
+                                quote_style: None,
+                            },
+                            asc: Some(false),
+                        },
+                        ClusteredIndex {
+                            name: Ident {
+                                value: "column_c".to_string(),
+                                quote_style: None,
+                            },
+                            asc: None,
+                        },
+                    ]))
+            ],
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (DISTRIBUTION = HASH(column_a, column_b), HEAP)",
+            vec![
+                SqlOption::KeyValue {
+                    key: Ident {
+                        value: "DISTRIBUTION".to_string(),
+                        quote_style: None,
+                    },
+                    value: Expr::Function(
+                        Function {
+                            name: ObjectName(
+                                vec![
+                                    Ident {
+                                        value: "HASH".to_string(),
+                                        quote_style: None,
+                                    },
+                                ],
+                            ),
+                            parameters: FunctionArguments::None,
+                            args: FunctionArguments::List(
+                                FunctionArgumentList {
+                                    duplicate_treatment: None,
+                                    args: vec![
+                                        FunctionArg::Unnamed(
+                                            FunctionArgExpr::Expr(
+                                                Expr::Identifier(
+                                                    Ident {
+                                                        value: "column_a".to_string(),
+                                                        quote_style: None,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        FunctionArg::Unnamed(
+                                            FunctionArgExpr::Expr(
+                                                Expr::Identifier(
+                                                    Ident {
+                                                        value: "column_b".to_string(),
+                                                        quote_style: None,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                    ],
+                                    clauses: vec![],
+                                },
+                            ),
+                            filter: None,
+                            null_treatment: None,
+                            over: None,
+                            within_group: vec![],
+                        },
+                    ),
+                },
+                SqlOption::Ident("HEAP".into()),
+            ],
+         ),
+    ];
+
+    for (sql, with_options) in options {
+        assert_eq!(
+            ms_and_generic().verified_stmt(sql),
+            Statement::CreateTable(CreateTable {
+                or_replace: false,
+                temporary: false,
+                external: false,
+                global: None,
+                if_not_exists: false,
+                transient: false,
+                volatile: false,
+                name: ObjectName(vec![Ident {
+                    value: "mytable".to_string(),
+                    quote_style: None,
+                },],),
+                columns: vec![
+                    ColumnDef {
+                        name: Ident {
+                            value: "column_a".to_string(),
+                            quote_style: None,
+                        },
+                        data_type: Int(None,),
+                        collation: None,
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident {
+                            value: "column_b".to_string(),
+                            quote_style: None,
+                        },
+                        data_type: Int(None,),
+                        collation: None,
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident {
+                            value: "column_c".to_string(),
+                            quote_style: None,
+                        },
+                        data_type: Int(None,),
+                        collation: None,
+                        options: vec![],
+                    },
+                ],
+                constraints: vec![],
+                hive_distribution: HiveDistributionStyle::NONE,
+                hive_formats: Some(HiveFormat {
+                    row_format: None,
+                    serde_properties: None,
+                    storage: None,
+                    location: None,
+                },),
+                table_properties: vec![],
+                with_options,
+                file_format: None,
+                location: None,
+                query: None,
+                without_rowid: false,
+                like: None,
+                clone: None,
+                engine: None,
+                comment: None,
+                auto_increment_offset: None,
+                default_charset: None,
+                collation: None,
+                on_commit: None,
+                on_cluster: None,
+                primary_key: None,
+                order_by: None,
+                partition_by: None,
+                cluster_by: None,
+                clustered_by: None,
+                options: None,
+                strict: false,
+                copy_grants: false,
+                enable_schema_evolution: None,
+                change_tracking: None,
+                data_retention_time_in_days: None,
+                max_data_extension_time_in_days: None,
+                default_ddl_collation: None,
+                with_aggregation_policy: None,
+                with_row_access_policy: None,
+                with_tags: None,
+            })
+        );
+    }
+}
+
+#[test]
+fn parse_create_table_with_invalid_options() {
+    let invalid_cases = vec![
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (CLUSTERED COLUMNSTORE INDEX ORDER ())",
+            "Expected: identifier, found: )",
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (CLUSTERED COLUMNSTORE)",
+            "invalid CLUSTERED sequence",
+        ),
+        (
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (HEAP INDEX)",
+            "Expected: ), found: INDEX",
+        ),
+        (
+
+            "CREATE TABLE mytable (column_a INT, column_b INT, column_c INT) WITH (PARTITION (RANGE LEFT FOR VALUES (10, 11)))",
+            "Expected: RANGE, found: LEFT",
+        ),
+    ];
+
+    for (sql, expected_error) in invalid_cases {
+        let res = ms_and_generic().parse_sql_statements(sql);
+        assert_eq!(
+            format!("sql parser error: {expected_error}"),
+            res.unwrap_err().to_string()
+        );
+    }
 }
 
 fn ms() -> TestedDialects {

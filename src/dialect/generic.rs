@@ -35,6 +35,10 @@ impl Dialect for GenericDialect {
             || ch == '_'
     }
 
+    fn supports_unicode_string_literal(&self) -> bool {
+        true
+    }
+
     fn supports_group_by_expr(&self) -> bool {
         true
     }
@@ -68,6 +72,22 @@ impl Dialect for GenericDialect {
     }
 
     fn supports_select_wildcard_except(&self) -> bool {
+        true
+    }
+
+    fn support_map_literal_syntax(&self) -> bool {
+        true
+    }
+
+    fn allow_extract_custom(&self) -> bool {
+        true
+    }
+
+    fn allow_extract_single_quotes(&self) -> bool {
+        true
+    }
+
+    fn supports_create_index_with_clause(&self) -> bool {
         true
     }
 }
