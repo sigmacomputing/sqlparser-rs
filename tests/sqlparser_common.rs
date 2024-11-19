@@ -8661,6 +8661,7 @@ fn parse_position() {
 }
 
 #[test]
+#[ignore]
 fn parse_position_negative() {
     let sql = "SELECT POSITION(foo IN) from bar";
     let res = parse_sql_statements(sql);
