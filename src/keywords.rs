@@ -655,7 +655,6 @@ define_keywords!(
     SETTINGS,
     SHARE,
     SHOW,
-    SIGMA,
     SIMILAR,
     SKIP,
     SLOW,

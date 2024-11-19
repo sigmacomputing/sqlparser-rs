@@ -462,8 +462,6 @@ pub enum Expr {
     Identifier(Ident),
     /// Multi-part identifier, e.g. `table_alias.column` or `schema.table.col`
     CompoundIdentifier(Vec<Ident>),
-    /// A reference to a Sigma scalar value, e.g. `@sigma.my_parameter`.
-    SigmaParameter(Ident),
     /// Access data nested in a value containing semi-structured data, such as
     /// the `VARIANT` type on Snowflake. for example `src:customer[0].name`.
     ///
@@ -950,7 +948,6 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Expr::Identifier(s) => write!(f, "{s}"),
-            Expr::SigmaParameter(s) => write!(f, "@sigma.{s}"),
             Expr::MapAccess { column, keys } => {
                 write!(f, "{column}{}", display_separated(keys, ""))
             }
