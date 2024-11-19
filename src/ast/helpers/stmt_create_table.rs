@@ -9,9 +9,9 @@ use sqlparser_derive::{Visit, VisitMut};
 
 use super::super::dml::CreateTable;
 use crate::ast::{
-    ColumnDef, CommentDef, Expr, FileFormat, HiveDistributionStyle, HiveFormat, Ident, ObjectName,
-    OnCommit, OneOrManyWithParens, Query, RowAccessPolicy, SqlOption, Statement, TableConstraint,
-    TableEngine, Tag, WrappedCollection,
+    ClusteredBy, ColumnDef, CommentDef, Expr, FileFormat, HiveDistributionStyle, HiveFormat, Ident,
+    ObjectName, OnCommit, OneOrManyWithParens, Query, RowAccessPolicy, SqlOption, Statement,
+    TableConstraint, TableEngine, Tag, WrappedCollection,
 };
 use crate::parser::ParserError;
 
@@ -73,11 +73,12 @@ pub struct CreateTableBuilder {
     pub default_charset: Option<String>,
     pub collation: Option<String>,
     pub on_commit: Option<OnCommit>,
-    pub on_cluster: Option<String>,
+    pub on_cluster: Option<Ident>,
     pub primary_key: Option<Box<Expr>>,
     pub order_by: Option<OneOrManyWithParens<Expr>>,
     pub partition_by: Option<Box<Expr>>,
     pub cluster_by: Option<WrappedCollection<Vec<Ident>>>,
+    pub clustered_by: Option<ClusteredBy>,
     pub options: Option<Vec<SqlOption>>,
     pub strict: bool,
     pub copy_grants: bool,
@@ -125,6 +126,7 @@ impl CreateTableBuilder {
             order_by: None,
             partition_by: None,
             cluster_by: None,
+            clustered_by: None,
             options: None,
             strict: false,
             copy_grants: false,
@@ -261,7 +263,7 @@ impl CreateTableBuilder {
         self
     }
 
-    pub fn on_cluster(mut self, on_cluster: Option<String>) -> Self {
+    pub fn on_cluster(mut self, on_cluster: Option<Ident>) -> Self {
         self.on_cluster = on_cluster;
         self
     }
@@ -283,6 +285,11 @@ impl CreateTableBuilder {
 
     pub fn cluster_by(mut self, cluster_by: Option<WrappedCollection<Vec<Ident>>>) -> Self {
         self.cluster_by = cluster_by;
+        self
+    }
+
+    pub fn clustered_by(mut self, clustered_by: Option<ClusteredBy>) -> Self {
+        self.clustered_by = clustered_by;
         self
     }
 
@@ -380,6 +387,7 @@ impl CreateTableBuilder {
             order_by: self.order_by,
             partition_by: self.partition_by,
             cluster_by: self.cluster_by,
+            clustered_by: self.clustered_by,
             options: self.options,
             strict: self.strict,
             copy_grants: self.copy_grants,
@@ -434,6 +442,7 @@ impl TryFrom<Statement> for CreateTableBuilder {
                 order_by,
                 partition_by,
                 cluster_by,
+                clustered_by,
                 options,
                 strict,
                 copy_grants,
@@ -476,6 +485,7 @@ impl TryFrom<Statement> for CreateTableBuilder {
                 order_by,
                 partition_by,
                 cluster_by,
+                clustered_by,
                 options,
                 strict,
                 copy_grants,
@@ -496,9 +506,9 @@ impl TryFrom<Statement> for CreateTableBuilder {
     }
 }
 
-/// Helper return type when parsing configuration for a BigQuery `CREATE TABLE` statement.
+/// Helper return type when parsing configuration for a `CREATE TABLE` statement.
 #[derive(Default)]
-pub(crate) struct BigQueryTableConfiguration {
+pub(crate) struct CreateTableConfiguration {
     pub partition_by: Option<Box<Expr>>,
     pub cluster_by: Option<WrappedCollection<Vec<Ident>>>,
     pub options: Option<Vec<SqlOption>>,

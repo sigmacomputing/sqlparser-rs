@@ -20,6 +20,7 @@ mod test_utils;
 use test_utils::*;
 
 use sqlparser::ast::SelectItem::UnnamedExpr;
+use sqlparser::ast::Value::Placeholder;
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, SQLiteDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
@@ -399,7 +400,8 @@ fn parse_update_tuple_row_values() {
                     args: None,
                     with_hints: vec![],
                     version: None,
-                    partitions: vec![]
+                    partitions: vec![],
+                    with_ordinality: false,
                 },
                 joins: vec![],
             },
@@ -467,6 +469,22 @@ fn parse_start_transaction_with_modifier() {
         ParserError::ParserError("Expected: end of statement, found: EXCLUSIVE".to_string()),
         res.unwrap_err(),
     );
+}
+
+#[test]
+fn test_dollar_identifier_as_placeholder() {
+    // This relates to the discussion in issue #291. The `$id` should be treated as a placeholder,
+    // not as an identifier in SQLite dialect.
+    //
+    // Reference: https://www.sqlite.org/lang_expr.html#varparam
+    match sqlite().verified_expr("id = $id") {
+        Expr::BinaryOp { op, left, right } => {
+            assert_eq!(op, BinaryOperator::Eq);
+            assert_eq!(left, Box::new(Expr::Identifier(Ident::new("id"))));
+            assert_eq!(right, Box::new(Expr::Value(Placeholder("$id".to_string()))));
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn sqlite() -> TestedDialects {

@@ -444,12 +444,35 @@ fn parse_show_collation() {
 
 #[test]
 fn parse_use() {
-    assert_eq!(
-        mysql_and_generic().verified_stmt("USE mydb"),
-        Statement::Use {
-            db_name: Ident::new("mydb")
+    let valid_object_names = [
+        "mydb",
+        "SCHEMA",
+        "DATABASE",
+        "CATALOG",
+        "WAREHOUSE",
+        "DEFAULT",
+    ];
+    let quote_styles = ['\'', '"', '`'];
+    for object_name in &valid_object_names {
+        // Test single identifier without quotes
+        assert_eq!(
+            mysql_and_generic().verified_stmt(&format!("USE {}", object_name)),
+            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+                object_name.to_string()
+            )])))
+        );
+        for &quote in &quote_styles {
+            // Test single identifier with different type of quotes
+            assert_eq!(
+                mysql_and_generic()
+                    .verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                    quote,
+                    object_name.to_string(),
+                )])))
+            );
         }
-    );
+    }
 }
 
 #[test]
@@ -813,6 +836,33 @@ fn parse_create_table_collate() {
 }
 
 #[test]
+fn parse_create_table_both_options_and_as_query() {
+    let sql = "CREATE TABLE foo (id INT(11)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb4_0900_ai_ci AS SELECT 1";
+    match mysql_and_generic().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable {
+            name,
+            collation,
+            query,
+            ..
+        }) => {
+            assert_eq!(name.to_string(), "foo");
+            assert_eq!(collation, Some("utf8mb4_0900_ai_ci".to_string()));
+            assert_eq!(
+                query.unwrap().body.as_select().unwrap().projection,
+                vec![SelectItem::UnnamedExpr(Expr::Value(number("1")))]
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    let sql = r"CREATE TABLE foo (id INT(11)) ENGINE=InnoDB AS SELECT 1 DEFAULT CHARSET=utf8mb3";
+    assert!(matches!(
+        mysql_and_generic().parse_sql_statements(sql),
+        Err(ParserError::ParserError(_))
+    ));
+}
+
+#[test]
 fn parse_create_table_comment_character_set() {
     let sql = "CREATE TABLE foo (s TEXT CHARACTER SET utf8mb4 COMMENT 'comment')";
     match mysql().verified_stmt(sql) {
@@ -919,7 +969,7 @@ fn parse_escaped_quote_identifiers_with_escape() {
                 value_table_mode: None,
                 connect_by: None,
             }))),
-            order_by: vec![],
+            order_by: None,
             limit: None,
             limit_by: vec![],
             offset: None,
@@ -969,7 +1019,7 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
                 value_table_mode: None,
                 connect_by: None,
             }))),
-            order_by: vec![],
+            order_by: None,
             limit: None,
             limit_by: vec![],
             offset: None,
@@ -1016,7 +1066,7 @@ fn parse_escaped_backticks_with_escape() {
                 value_table_mode: None,
                 connect_by: None,
             }))),
-            order_by: vec![],
+            order_by: None,
             limit: None,
             limit_by: vec![],
             offset: None,
@@ -1063,7 +1113,7 @@ fn parse_escaped_backticks_with_no_escape() {
                 value_table_mode: None,
                 connect_by: None,
             }))),
-            order_by: vec![],
+            order_by: None,
             limit: None,
             limit_by: vec![],
             offset: None,
@@ -1269,7 +1319,7 @@ fn parse_simple_insert() {
                             ]
                         ]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1313,7 +1363,7 @@ fn parse_ignore_insert() {
                             Expr::Value(number("1"))
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1357,7 +1407,7 @@ fn parse_priority_insert() {
                             Expr::Value(number("1"))
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1398,7 +1448,7 @@ fn parse_priority_insert() {
                             Expr::Value(number("1"))
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1447,7 +1497,7 @@ fn parse_insert_as() {
                             "2024-01-01".to_string()
                         ))]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1508,7 +1558,7 @@ fn parse_insert_as() {
                             Expr::Value(Value::SingleQuotedString("2024-01-01".to_string()))
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1553,7 +1603,7 @@ fn parse_replace_insert() {
                             Expr::Value(number("1"))
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1592,7 +1642,7 @@ fn parse_empty_row_insert() {
                         explicit_row: false,
                         rows: vec![vec![], vec![]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1654,7 +1704,7 @@ fn parse_insert_with_on_duplicate_update() {
                             Expr::Value(Value::Boolean(true)),
                         ]]
                     })),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -1728,6 +1778,7 @@ fn parse_select_with_numeric_prefix_column_name() {
                             with_hints: vec![],
                             version: None,
                             partitions: vec![],
+                            with_ordinality: false,
                         },
                         joins: vec![]
                     }],
@@ -1782,6 +1833,7 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
                             with_hints: vec![],
                             version: None,
                             partitions: vec![],
+                            with_ordinality: false,
                         },
                         joins: vec![]
                     }],
@@ -1847,6 +1899,7 @@ fn parse_update_with_joins() {
                         with_hints: vec![],
                         version: None,
                         partitions: vec![],
+                        with_ordinality: false,
                     },
                     joins: vec![Join {
                         relation: TableFactor::Table {
@@ -1859,7 +1912,9 @@ fn parse_update_with_joins() {
                             with_hints: vec![],
                             version: None,
                             partitions: vec![],
+                            with_ordinality: false,
                         },
+                        global: false,
                         join_operator: JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp {
                             left: Box::new(Expr::CompoundIdentifier(vec![
                                 Ident::new("o"),
@@ -1915,6 +1970,7 @@ fn parse_delete_with_order_by() {
                     }),
                     asc: Some(false),
                     nulls_first: None,
+                    with_fill: None,
                 }],
                 order_by
             );
@@ -1943,6 +1999,7 @@ fn parse_alter_table_add_column() {
             only,
             operations,
             location: _,
+            on_cluster: _,
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
@@ -1972,6 +2029,7 @@ fn parse_alter_table_add_column() {
             only,
             operations,
             location: _,
+            on_cluster: _,
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
@@ -2009,6 +2067,7 @@ fn parse_alter_table_add_columns() {
             only,
             operations,
             location: _,
+            on_cluster: _,
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
@@ -2282,6 +2341,7 @@ fn parse_substring_in_select() {
                                 with_hints: vec![],
                                 version: None,
                                 partitions: vec![],
+                                with_ordinality: false,
                             },
                             joins: vec![]
                         }],
@@ -2299,7 +2359,7 @@ fn parse_substring_in_select() {
                         value_table_mode: None,
                         connect_by: None,
                     }))),
-                    order_by: vec![],
+                    order_by: None,
                     limit: None,
                     limit_by: vec![],
                     offset: None,
@@ -2607,7 +2667,7 @@ fn parse_hex_string_introducer() {
                 into: None,
                 connect_by: None,
             }))),
-            order_by: vec![],
+            order_by: None,
             limit: None,
             limit_by: vec![],
             offset: None,
