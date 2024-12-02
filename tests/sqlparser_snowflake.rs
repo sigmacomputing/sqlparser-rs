@@ -2333,6 +2333,13 @@ fn parse_top() {
 }
 
 #[test]
+fn parse_percentile_cont_within_group_over() {
+    snowflake().verified_only_select(
+        "SELECT PERCENTILE_DISC(0.90) WITHIN GROUP (ORDER BY foo) OVER (PARTITION BY bar)",
+    );
+}
+
+#[test]
 fn parse_extract_custom_part() {
     let sql = "SELECT EXTRACT(eod FROM d)";
     let select = snowflake_and_generic().verified_only_select(sql);
