@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 //! Test SQL syntax specific to PostgreSQL. The parser based on the
@@ -16,6 +21,8 @@
 
 #[macro_use]
 mod test_utils;
+use helpers::attached_token::AttachedToken;
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 use sqlparser::ast::*;
@@ -275,6 +282,26 @@ fn parse_create_sequence() {
     pg().one_statement_parses_to(
         sql6,
         "CREATE TEMPORARY SEQUENCE IF NOT EXISTS name3 INCREMENT 1 NO MINVALUE MAXVALUE 20 OWNED BY NONE",
+    );
+
+    let sql7 = "CREATE SEQUENCE name4
+    AS BIGINT
+    INCREMENT   -15
+    MINVALUE - 2000  MAXVALUE -50
+    START WITH -   60";
+    pg().one_statement_parses_to(
+        sql7,
+        "CREATE SEQUENCE name4 AS BIGINT INCREMENT -15 MINVALUE -2000 MAXVALUE -50 START WITH -60",
+    );
+
+    let sql8 = "CREATE SEQUENCE name5
+    AS BIGINT
+    INCREMENT   +10
+    MINVALUE + 30  MAXVALUE +5000
+    START WITH +   45";
+    pg().one_statement_parses_to(
+        sql8,
+        "CREATE SEQUENCE name5 AS BIGINT INCREMENT +10 MINVALUE +30 MAXVALUE +5000 START WITH +45",
     );
 
     assert!(matches!(
@@ -1138,14 +1165,17 @@ fn parse_copy_to() {
             source: CopySource::Query(Box::new(Query {
                 with: None,
                 body: Box::new(SetExpr::Select(Box::new(Select {
+                    select_token: AttachedToken::empty(),
                     distinct: None,
                     top: None,
+                    top_before_distinct: false,
                     projection: vec![
                         SelectItem::ExprWithAlias {
                             expr: Expr::Value(number("42")),
                             alias: Ident {
                                 value: "a".into(),
                                 quote_style: None,
+                                span: Span::empty(),
                             },
                         },
                         SelectItem::ExprWithAlias {
@@ -1153,6 +1183,7 @@ fn parse_copy_to() {
                             alias: Ident {
                                 value: "b".into(),
                                 quote_style: None,
+                                span: Span::empty(),
                             },
                         }
                     ],
@@ -1292,7 +1323,8 @@ fn parse_set() {
             variables: OneOrManyWithParens::One(ObjectName(vec![Ident::new("a")])),
             value: vec![Expr::Identifier(Ident {
                 value: "b".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             })],
         }
     );
@@ -1326,10 +1358,7 @@ fn parse_set() {
             local: false,
             hivevar: false,
             variables: OneOrManyWithParens::One(ObjectName(vec![Ident::new("a")])),
-            value: vec![Expr::Identifier(Ident {
-                value: "DEFAULT".into(),
-                quote_style: None
-            })],
+            value: vec![Expr::Identifier(Ident::new("DEFAULT"))],
         }
     );
 
@@ -1357,7 +1386,8 @@ fn parse_set() {
             ])),
             value: vec![Expr::Identifier(Ident {
                 value: "b".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             })],
         }
     );
@@ -1429,6 +1459,7 @@ fn parse_set_role() {
             role_name: Some(Ident {
                 value: "rolename".to_string(),
                 quote_style: Some('\"'),
+                span: Span::empty(),
             }),
         }
     );
@@ -1443,6 +1474,7 @@ fn parse_set_role() {
             role_name: Some(Ident {
                 value: "rolename".to_string(),
                 quote_style: Some('\''),
+                span: Span::empty(),
             }),
         }
     );
@@ -1513,8 +1545,9 @@ fn parse_execute() {
     assert_eq!(
         stmt,
         Statement::Execute {
-            name: "a".into(),
+            name: ObjectName(vec!["a".into()]),
             parameters: vec![],
+            has_parentheses: false,
             using: vec![]
         }
     );
@@ -1523,11 +1556,12 @@ fn parse_execute() {
     assert_eq!(
         stmt,
         Statement::Execute {
-            name: "a".into(),
+            name: ObjectName(vec!["a".into()]),
             parameters: vec![
                 Expr::Value(number("1")),
                 Expr::Value(Value::SingleQuotedString("t".to_string()))
             ],
+            has_parentheses: true,
             using: vec![]
         }
     );
@@ -1537,8 +1571,9 @@ fn parse_execute() {
     assert_eq!(
         stmt,
         Statement::Execute {
-            name: "a".into(),
+            name: ObjectName(vec!["a".into()]),
             parameters: vec![],
+            has_parentheses: false,
             using: vec![
                 Expr::Cast {
                     kind: CastKind::Cast,
@@ -1739,7 +1774,8 @@ fn parse_pg_on_conflict() {
                     selection: Some(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier(Ident {
                             value: "dsize".to_string(),
-                            quote_style: None
+                            quote_style: None,
+                            span: Span::empty(),
                         })),
                         op: BinaryOperator::Gt,
                         right: Box::new(Expr::Value(Value::Placeholder("$2".to_string())))
@@ -1776,7 +1812,8 @@ fn parse_pg_on_conflict() {
                     selection: Some(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier(Ident {
                             value: "dsize".to_string(),
-                            quote_style: None
+                            quote_style: None,
+                            span: Span::empty(),
                         })),
                         op: BinaryOperator::Gt,
                         right: Box::new(Expr::Value(Value::Placeholder("$2".to_string())))
@@ -2079,14 +2116,16 @@ fn parse_array_index_expr() {
                 subscript: Box::new(Subscript::Index {
                     index: Expr::Identifier(Ident {
                         value: "baz".to_string(),
-                        quote_style: Some('"')
+                        quote_style: Some('"'),
+                        span: Span::empty(),
                     })
                 })
             }),
             subscript: Box::new(Subscript::Index {
                 index: Expr::Identifier(Ident {
                     value: "fooz".to_string(),
-                    quote_style: Some('"')
+                    quote_style: Some('"'),
+                    span: Span::empty(),
                 })
             })
         },
@@ -2478,8 +2517,10 @@ fn parse_array_subquery_expr() {
                     op: SetOperator::Union,
                     set_quantifier: SetQuantifier::None,
                     left: Box::new(SetExpr::Select(Box::new(Select {
+                        select_token: AttachedToken::empty(),
                         distinct: None,
                         top: None,
+                        top_before_distinct: false,
                         projection: vec![SelectItem::UnnamedExpr(Expr::Value(number("1")))],
                         into: None,
                         from: vec![],
@@ -2498,8 +2539,10 @@ fn parse_array_subquery_expr() {
                         connect_by: None,
                     }))),
                     right: Box::new(SetExpr::Select(Box::new(Select {
+                        select_token: AttachedToken::empty(),
                         distinct: None,
                         top: None,
+                        top_before_distinct: false,
                         projection: vec![SelectItem::UnnamedExpr(Expr::Value(number("2")))],
                         into: None,
                         from: vec![],
@@ -2782,6 +2825,19 @@ fn test_json() {
 }
 
 #[test]
+fn test_fn_arg_with_value_operator() {
+    match pg().verified_expr("JSON_OBJECT('name' VALUE 'value')") {
+        Expr::Function(Function { args: FunctionArguments::List(FunctionArgumentList { args, .. }), .. }) => {
+            assert!(matches!(
+                &args[..],
+                &[FunctionArg::ExprNamed { operator: FunctionArgOperator::Value, .. }]
+            ), "Invalid function argument: {:?}", args);
+        }
+        other => panic!("Expected: JSON_OBJECT('name' VALUE 'value') to be parsed as a function, but got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_json_table_is_not_reserved() {
     // JSON_TABLE is not a reserved keyword in PostgreSQL, even though it is in SQL:2023
     // see: https://en.wikipedia.org/wiki/List_of_SQL_reserved_words
@@ -2861,53 +2917,6 @@ fn test_composite_value() {
 }
 
 #[test]
-fn parse_comments() {
-    match pg().verified_stmt("COMMENT ON COLUMN tab.name IS 'comment'") {
-        Statement::Comment {
-            object_type,
-            object_name,
-            comment: Some(comment),
-            if_exists,
-        } => {
-            assert_eq!("comment", comment);
-            assert_eq!("tab.name", object_name.to_string());
-            assert_eq!(CommentObject::Column, object_type);
-            assert!(!if_exists);
-        }
-        _ => unreachable!(),
-    }
-
-    match pg().verified_stmt("COMMENT ON TABLE public.tab IS 'comment'") {
-        Statement::Comment {
-            object_type,
-            object_name,
-            comment: Some(comment),
-            if_exists,
-        } => {
-            assert_eq!("comment", comment);
-            assert_eq!("public.tab", object_name.to_string());
-            assert_eq!(CommentObject::Table, object_type);
-            assert!(!if_exists);
-        }
-        _ => unreachable!(),
-    }
-
-    match pg().verified_stmt("COMMENT IF EXISTS ON TABLE public.tab IS NULL") {
-        Statement::Comment {
-            object_type,
-            object_name,
-            comment: None,
-            if_exists,
-        } => {
-            assert_eq!("public.tab", object_name.to_string());
-            assert_eq!(CommentObject::Table, object_type);
-            assert!(if_exists);
-        }
-        _ => unreachable!(),
-    }
-}
-
-#[test]
 fn parse_quoted_identifier() {
     pg_and_generic().verified_stmt(r#"SELECT "quoted "" ident""#);
 }
@@ -2933,17 +2942,14 @@ fn parse_on_commit() {
 }
 
 fn pg() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(PostgreSqlDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(PostgreSqlDialect {})])
 }
 
 fn pg_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(PostgreSqlDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(PostgreSqlDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -3145,6 +3151,7 @@ fn parse_custom_operator() {
             left: Box::new(Expr::Identifier(Ident {
                 value: "relname".into(),
                 quote_style: None,
+                span: Span::empty(),
             })),
             op: BinaryOperator::PGCustomBinaryOperator(vec![
                 "database".into(),
@@ -3164,6 +3171,7 @@ fn parse_custom_operator() {
             left: Box::new(Expr::Identifier(Ident {
                 value: "relname".into(),
                 quote_style: None,
+                span: Span::empty(),
             })),
             op: BinaryOperator::PGCustomBinaryOperator(vec!["pg_catalog".into(), "~".into()]),
             right: Box::new(Expr::Value(Value::SingleQuotedString("^(table)$".into())))
@@ -3179,6 +3187,7 @@ fn parse_custom_operator() {
             left: Box::new(Expr::Identifier(Ident {
                 value: "relname".into(),
                 quote_style: None,
+                span: Span::empty(),
             })),
             op: BinaryOperator::PGCustomBinaryOperator(vec!["~".into()]),
             right: Box::new(Expr::Value(Value::SingleQuotedString("^(table)$".into())))
@@ -3329,12 +3338,14 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "old_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::RenameRole {
                 role_name: Ident {
                     value: "new_name".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }
             },
         }
@@ -3346,7 +3357,8 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::WithOptions {
                 options: vec![
@@ -3375,7 +3387,8 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::WithOptions {
                 options: vec![
@@ -3398,12 +3411,14 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Set {
                 config_name: ObjectName(vec![Ident {
                     value: "maintenance_work_mem".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 config_value: SetConfigValue::FromCurrent,
                 in_database: None
@@ -3417,17 +3432,20 @@ fn parse_alter_role() {
         [Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Set {
                 config_name: ObjectName(vec![Ident {
                     value: "maintenance_work_mem".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 config_value: SetConfigValue::Value(Expr::Value(number("100000"))),
                 in_database: Some(ObjectName(vec![Ident {
                     value: "database_name".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]))
             },
         }]
@@ -3439,17 +3457,20 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Set {
                 config_name: ObjectName(vec![Ident {
                     value: "maintenance_work_mem".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 config_value: SetConfigValue::Value(Expr::Value(number("100000"))),
                 in_database: Some(ObjectName(vec![Ident {
                     value: "database_name".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]))
             },
         }
@@ -3461,17 +3482,20 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Set {
                 config_name: ObjectName(vec![Ident {
                     value: "maintenance_work_mem".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 config_value: SetConfigValue::Default,
                 in_database: Some(ObjectName(vec![Ident {
                     value: "database_name".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]))
             },
         }
@@ -3483,7 +3507,8 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Reset {
                 config_name: ResetConfig::ALL,
@@ -3498,16 +3523,19 @@ fn parse_alter_role() {
         Statement::AlterRole {
             name: Ident {
                 value: "role_name".into(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             },
             operation: AlterRoleOperation::Reset {
                 config_name: ResetConfig::ConfigName(ObjectName(vec![Ident {
                     value: "maintenance_work_mem".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }])),
                 in_database: Some(ObjectName(vec![Ident {
                     value: "database_name".into(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]))
             },
         }
@@ -3530,6 +3558,7 @@ fn parse_delimited_identifiers() {
             version,
             with_ordinality: _,
             partitions: _,
+            json_path: _,
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
@@ -3602,7 +3631,7 @@ fn parse_create_function() {
     let sql = "CREATE FUNCTION add(INTEGER, INTEGER) RETURNS INTEGER LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE AS 'select $1 + $2;'";
     assert_eq!(
         pg_and_generic().verified_stmt(sql),
-        Statement::CreateFunction {
+        Statement::CreateFunction(CreateFunction {
             or_replace: false,
             temporary: false,
             name: ObjectName(vec![Ident::new("add")]),
@@ -3623,7 +3652,7 @@ fn parse_create_function() {
             determinism_specifier: None,
             options: None,
             remote_connection: None,
-        }
+        })
     );
 }
 
@@ -3651,7 +3680,8 @@ fn parse_drop_function() {
             func_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_func".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 args: None
             }],
@@ -3667,7 +3697,8 @@ fn parse_drop_function() {
             func_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_func".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 args: Some(vec![
                     OperateFunctionArg::with_name("a", DataType::Integer(None)),
@@ -3692,7 +3723,8 @@ fn parse_drop_function() {
                 FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_func1".to_string(),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     }]),
                     args: Some(vec![
                         OperateFunctionArg::with_name("a", DataType::Integer(None)),
@@ -3710,7 +3742,8 @@ fn parse_drop_function() {
                 FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_func2".to_string(),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     }]),
                     args: Some(vec![
                         OperateFunctionArg::with_name("a", DataType::Varchar(None)),
@@ -3741,7 +3774,8 @@ fn parse_drop_procedure() {
             proc_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_proc".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 args: None
             }],
@@ -3757,7 +3791,8 @@ fn parse_drop_procedure() {
             proc_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_proc".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }]),
                 args: Some(vec![
                     OperateFunctionArg::with_name("a", DataType::Integer(None)),
@@ -3782,7 +3817,8 @@ fn parse_drop_procedure() {
                 FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_proc1".to_string(),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     }]),
                     args: Some(vec![
                         OperateFunctionArg::with_name("a", DataType::Integer(None)),
@@ -3800,7 +3836,8 @@ fn parse_drop_procedure() {
                 FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_proc2".to_string(),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     }]),
                     args: Some(vec![
                         OperateFunctionArg::with_name("a", DataType::Varchar(None)),
@@ -3881,6 +3918,7 @@ fn parse_dollar_quoted_string() {
             alias: Ident {
                 value: "col_name".into(),
                 quote_style: None,
+                span: Span::empty(),
             },
         }
     );
@@ -3990,6 +4028,7 @@ fn parse_truncate() {
             only: false,
             identity: None,
             cascade: None,
+            on_cluster: None,
         },
         truncate
     );
@@ -4012,7 +4051,8 @@ fn parse_truncate_with_options() {
             table: true,
             only: true,
             identity: Some(TruncateIdentityOption::Restart),
-            cascade: Some(TruncateCascadeOption::Cascade)
+            cascade: Some(TruncateCascadeOption::Cascade),
+            on_cluster: None,
         },
         truncate
     );
@@ -4043,7 +4083,8 @@ fn parse_truncate_with_table_list() {
             table: true,
             only: false,
             identity: Some(TruncateIdentityOption::Restart),
-            cascade: Some(TruncateCascadeOption::Cascade)
+            cascade: Some(TruncateCascadeOption::Cascade),
+            on_cluster: None,
         },
         truncate
     );
@@ -4222,20 +4263,24 @@ fn test_simple_postgres_insert_with_alias() {
             into: true,
             table_name: ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             }]),
             table_alias: Some(Ident {
                 value: "test_table".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             }),
             columns: vec![
                 Ident {
                     value: "id".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 },
                 Ident {
                     value: "a".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }
             ],
             overwrite: false,
@@ -4244,10 +4289,7 @@ fn test_simple_postgres_insert_with_alias() {
                 body: Box::new(SetExpr::Values(Values {
                     explicit_row: false,
                     rows: vec![vec![
-                        Expr::Identifier(Ident {
-                            value: "DEFAULT".to_string(),
-                            quote_style: None
-                        }),
+                        Expr::Identifier(Ident::new("DEFAULT")),
                         Expr::Value(Value::Number("123".to_string(), false))
                     ]]
                 })),
@@ -4288,20 +4330,24 @@ fn test_simple_postgres_insert_with_alias() {
             into: true,
             table_name: ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             }]),
             table_alias: Some(Ident {
                 value: "test_table".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             }),
             columns: vec![
                 Ident {
                     value: "id".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 },
                 Ident {
                     value: "a".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }
             ],
             overwrite: false,
@@ -4310,10 +4356,7 @@ fn test_simple_postgres_insert_with_alias() {
                 body: Box::new(SetExpr::Values(Values {
                     explicit_row: false,
                     rows: vec![vec![
-                        Expr::Identifier(Ident {
-                            value: "DEFAULT".to_string(),
-                            quote_style: None
-                        }),
+                        Expr::Identifier(Ident::new("DEFAULT")),
                         Expr::Value(Value::Number(
                             bigdecimal::BigDecimal::new(123.into(), 0),
                             false
@@ -4356,20 +4399,24 @@ fn test_simple_insert_with_quoted_alias() {
             into: true,
             table_name: ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty(),
             }]),
             table_alias: Some(Ident {
                 value: "Test_Table".to_string(),
-                quote_style: Some('"')
+                quote_style: Some('"'),
+                span: Span::empty(),
             }),
             columns: vec![
                 Ident {
                     value: "id".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 },
                 Ident {
                     value: "a".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }
             ],
             overwrite: false,
@@ -4378,10 +4425,7 @@ fn test_simple_insert_with_quoted_alias() {
                 body: Box::new(SetExpr::Values(Values {
                     explicit_row: false,
                     rows: vec![vec![
-                        Expr::Identifier(Ident {
-                            value: "DEFAULT".to_string(),
-                            quote_style: None
-                        }),
+                        Expr::Identifier(Ident::new("DEFAULT")),
                         Expr::Value(Value::SingleQuotedString("0123".to_string()))
                     ]]
                 })),
@@ -4943,7 +4987,7 @@ fn parse_trigger_related_functions() {
 
     assert_eq!(
         create_function,
-        Statement::CreateFunction {
+        Statement::CreateFunction(CreateFunction {
             or_replace: false,
             temporary: false,
             if_not_exists: false,
@@ -4973,7 +5017,7 @@ fn parse_trigger_related_functions() {
             options: None,
             remote_connection: None
         }
-    );
+    ));
 
     // Check the third statement
 
@@ -5044,6 +5088,7 @@ fn check_arrow_precedence(sql: &str, arrow_operator: BinaryOperator) {
                 left: Box::new(Expr::Identifier(Ident {
                     value: "foo".to_string(),
                     quote_style: None,
+                    span: Span::empty(),
                 })),
                 op: arrow_operator,
                 right: Box::new(Expr::Value(Value::SingleQuotedString("bar".to_string()))),
@@ -5074,6 +5119,7 @@ fn arrow_cast_precedence() {
             left: Box::new(Expr::Identifier(Ident {
                 value: "foo".to_string(),
                 quote_style: None,
+                span: Span::empty(),
             })),
             op: BinaryOperator::Arrow,
             right: Box::new(Expr::Cast {
@@ -5084,4 +5130,44 @@ fn arrow_cast_precedence() {
             }),
         }
     )
+}
+
+#[test]
+fn parse_create_type_as_enum() {
+    let statement = pg().one_statement_parses_to(
+        r#"CREATE TYPE public.my_type AS ENUM (
+            'label1',
+            'label2',
+            'label3',
+            'label4'
+        );"#,
+        "CREATE TYPE public.my_type AS ENUM ('label1', 'label2', 'label3', 'label4')",
+    );
+    match statement {
+        Statement::CreateType {
+            name,
+            representation: UserDefinedTypeRepresentation::Enum { labels },
+        } => {
+            assert_eq!("public.my_type", name.to_string());
+            assert_eq!(
+                vec!["label1", "label2", "label3", "label4"]
+                    .into_iter()
+                    .map(|l| Ident::with_quote('\'', l))
+                    .collect::<Vec<Ident>>(),
+                labels
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_bitstring_literal() {
+    let select = pg_and_generic().verified_only_select("SELECT B'111'");
+    assert_eq!(
+        select.projection,
+        vec![SelectItem::UnnamedExpr(Expr::Value(
+            Value::SingleQuotedByteStringLiteral("111".to_string())
+        ))]
+    );
 }

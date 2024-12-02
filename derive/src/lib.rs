@@ -1,31 +1,50 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
-use syn::{
-    parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote, Attribute, Data, DeriveInput,
-    Fields, GenericParam, Generics, Ident, Index, LitStr, Meta, Token
-};
-
+use syn::{parse::{Parse, ParseStream}, parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericParam, Generics, Ident, Index, LitStr, Meta, Token, Type, TypePath};
+use syn::{Path, PathArguments};
 
 /// Implementation of `[#derive(Visit)]`
 #[proc_macro_derive(VisitMut, attributes(visit))]
 pub fn derive_visit_mut(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_visit(input, &VisitType {
-        visit_trait: quote!(VisitMut),
-        visitor_trait: quote!(VisitorMut),
-        modifier: Some(quote!(mut)),
-    })
+    derive_visit(
+        input,
+        &VisitType {
+            visit_trait: quote!(VisitMut),
+            visitor_trait: quote!(VisitorMut),
+            modifier: Some(quote!(mut)),
+        },
+    )
 }
 
 /// Implementation of `[#derive(Visit)]`
 #[proc_macro_derive(Visit, attributes(visit))]
 pub fn derive_visit_immutable(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_visit(input, &VisitType {
-        visit_trait: quote!(Visit),
-        visitor_trait: quote!(Visitor),
-        modifier: None,
-    })
+    derive_visit(
+        input,
+        &VisitType {
+            visit_trait: quote!(Visit),
+            visitor_trait: quote!(Visitor),
+            modifier: None,
+        },
+    )
 }
 
 struct VisitType {
@@ -34,15 +53,16 @@ struct VisitType {
     modifier: Option<TokenStream>,
 }
 
-fn derive_visit(
-    input: proc_macro::TokenStream,
-    visit_type: &VisitType,
-) -> proc_macro::TokenStream {
+fn derive_visit(input: proc_macro::TokenStream, visit_type: &VisitType) -> proc_macro::TokenStream {
     // Parse the input tokens into a syntax tree.
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
 
-    let VisitType { visit_trait, visitor_trait, modifier } = visit_type;
+    let VisitType {
+        visit_trait,
+        visitor_trait,
+        modifier,
+    } = visit_type;
 
     let attributes = Attributes::parse(&input.attrs);
     // Add a bound `T: Visit` to every type parameter T.
@@ -87,7 +107,10 @@ impl Parse for WithIdent {
         let mut result = WithIdent { with: None };
         let ident = input.parse::<Ident>()?;
         if ident != "with" {
-            return Err(syn::Error::new(ident.span(), "Expected identifier to be `with`"));
+            return Err(syn::Error::new(
+                ident.span(),
+                "Expected identifier to be `with`",
+            ));
         }
         input.parse::<Token!(=)>()?;
         let s = input.parse::<LitStr>()?;
@@ -131,25 +154,46 @@ impl Attributes {
 }
 
 // Add a bound `T: Visit` to every type parameter T.
-fn add_trait_bounds(mut generics: Generics, VisitType{visit_trait, ..}: &VisitType) -> Generics {
+fn add_trait_bounds(mut generics: Generics, VisitType { visit_trait, .. }: &VisitType) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(sqlparser::ast::#visit_trait));
+            type_param
+                .bounds
+                .push(parse_quote!(sqlparser::ast::#visit_trait));
         }
     }
     generics
 }
 
 // Generate the body of the visit implementation for the given type
-fn visit_children(data: &Data, VisitType{visit_trait, modifier, ..}: &VisitType) -> TokenStream {
+fn visit_children(
+    data: &Data,
+    VisitType {
+        visit_trait,
+        modifier,
+        ..
+    }: &VisitType,
+) -> TokenStream {
     match data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => {
                 let recurse = fields.named.iter().map(|f| {
                     let name = &f.ident;
+                    let is_option = is_option(&f.ty);
                     let attributes = Attributes::parse(&f.attrs);
-                    let (pre_visit, post_visit) = attributes.visit(quote!(&#modifier self.#name));
-                    quote_spanned!(f.span() => #pre_visit sqlparser::ast::#visit_trait::visit(&#modifier self.#name, visitor)?; #post_visit)
+                    if is_option && attributes.with.is_some() {
+                        let (pre_visit, post_visit) = attributes.visit(quote!(value));
+                        quote_spanned!(f.span() =>
+                            if let Some(value) = &#modifier self.#name {
+                                #pre_visit sqlparser::ast::#visit_trait::visit(value, visitor)?; #post_visit
+                            }
+                        )
+                    } else {
+                        let (pre_visit, post_visit) = attributes.visit(quote!(&#modifier self.#name));
+                        quote_spanned!(f.span() =>
+                            #pre_visit sqlparser::ast::#visit_trait::visit(&#modifier self.#name, visitor)?; #post_visit
+                        )
+                    }
                 });
                 quote! {
                     #(#recurse)*
@@ -220,4 +264,17 @@ fn visit_children(data: &Data, VisitType{visit_trait, modifier, ..}: &VisitType)
         }
         Data::Union(_) => unimplemented!(),
     }
+}
+
+fn is_option(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path: Path { segments, .. }, .. }) = ty {
+        if let Some(segment) = segments.last() {
+            if segment.ident == "Option" {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    return args.args.len() == 1;
+                }
+            }
+        }
+    }
+    false
 }

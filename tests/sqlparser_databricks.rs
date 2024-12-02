@@ -1,3 +1,20 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 use sqlparser::ast::*;
 use sqlparser::dialect::{DatabricksDialect, GenericDialect};
 use sqlparser::parser::ParserError;
@@ -7,17 +24,14 @@ use test_utils::*;
 mod test_utils;
 
 fn databricks() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DatabricksDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(DatabricksDialect {})])
 }
 
 fn databricks_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DatabricksDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(DatabricksDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -64,7 +78,7 @@ fn test_databricks_exists() {
     let res = databricks().parse_sql_statements("SELECT EXISTS (");
     assert_eq!(
         // TODO: improve this error message...
-        ParserError::ParserError("Expected: an expression:, found: EOF".to_string()),
+        ParserError::ParserError("Expected: an expression, found: EOF".to_string()),
         res.unwrap_err(),
     );
 }
@@ -179,6 +193,7 @@ fn test_values_clause() {
             version: None,
             partitions: vec![],
             with_ordinality: false,
+            json_path: None,
         }),
         query
             .body
@@ -262,4 +277,39 @@ fn parse_use() {
             ParserError::ParserError("Expected: identifier, found: EOF".to_string()),
         );
     }
+}
+
+#[test]
+fn parse_databricks_struct_function() {
+    assert_eq!(
+        databricks_and_generic()
+            .verified_only_select("SELECT STRUCT(1, 'foo')")
+            .projection[0],
+        SelectItem::UnnamedExpr(Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::Value(Value::SingleQuotedString("foo".to_string()))
+            ],
+            fields: vec![]
+        })
+    );
+    assert_eq!(
+        databricks_and_generic()
+            .verified_only_select("SELECT STRUCT(1 AS one, 'foo' AS foo, false)")
+            .projection[0],
+        SelectItem::UnnamedExpr(Expr::Struct {
+            values: vec![
+                Expr::Named {
+                    expr: Expr::Value(number("1")).into(),
+                    name: Ident::new("one")
+                },
+                Expr::Named {
+                    expr: Expr::Value(Value::SingleQuotedString("foo".to_string())).into(),
+                    name: Ident::new("foo")
+                },
+                Expr::Value(Value::Boolean(false))
+            ],
+            fields: vec![]
+        })
+    );
 }

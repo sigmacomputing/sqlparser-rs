@@ -1,20 +1,27 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 
-/// A small command-line app to run the parser.
-/// Run with `cargo run --example cli`
+//! A small command-line app to run the parser.
+//! Run with `cargo run --example cli`
+
 use std::fs;
+use std::io::{stdin, Read};
 
 use simple_logger::SimpleLogger;
 use sqlparser::dialect::*;
@@ -32,6 +39,9 @@ $ cargo run --example cli FILENAME.sql [--dialectname]
 
 To print the parse results as JSON:
 $ cargo run --feature json_example --example cli FILENAME.sql [--dialectname]
+
+To read from stdin instead of a file:
+$ cargo run --example cli - [--dialectname]
 
 "#,
     );
@@ -52,9 +62,18 @@ $ cargo run --feature json_example --example cli FILENAME.sql [--dialectname]
         s => panic!("Unexpected parameter: {s}"),
     };
 
-    println!("Parsing from file '{}' using {:?}", &filename, dialect);
-    let contents = fs::read_to_string(&filename)
-        .unwrap_or_else(|_| panic!("Unable to read the file {}", &filename));
+    let contents = if filename == "-" {
+        println!("Parsing from stdin using {:?}", dialect);
+        let mut buf = Vec::new();
+        stdin()
+            .read_to_end(&mut buf)
+            .expect("failed to read from stdin");
+        String::from_utf8(buf).expect("stdin content wasn't valid utf8")
+    } else {
+        println!("Parsing from file '{}' using {:?}", &filename, dialect);
+        fs::read_to_string(&filename)
+            .unwrap_or_else(|_| panic!("Unable to read the file {}", &filename))
+    };
     let without_bom = if contents.chars().next().unwrap() as u64 != 0xfeff {
         contents.as_str()
     } else {

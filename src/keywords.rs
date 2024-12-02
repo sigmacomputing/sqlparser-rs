@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 //! This module defines
 //! 1) a list of constants for every keyword
@@ -69,8 +74,10 @@ macro_rules! define_keywords {
 define_keywords!(
     ABORT,
     ABS,
+    ABSENT,
     ABSOLUTE,
     ACCESS,
+    ACCOUNT,
     ACTION,
     ADD,
     ADMIN,
@@ -86,6 +93,7 @@ define_keywords!(
     AND,
     ANTI,
     ANY,
+    APPLICATION,
     APPLY,
     ARCHIVE,
     ARE,
@@ -212,6 +220,7 @@ define_keywords!(
     CYCLE,
     DATA,
     DATABASE,
+    DATABASES,
     DATA_RETENTION_TIME_IN_DAYS,
     DATE,
     DATE32,
@@ -381,6 +390,7 @@ define_keywords!(
     INITIALLY,
     INNER,
     INOUT,
+    INPATH,
     INPUT,
     INPUTFORMAT,
     INSENSITIVE,
@@ -432,6 +442,7 @@ define_keywords!(
     LIKE_REGEX,
     LIMIT,
     LINES,
+    LISTEN,
     LN,
     LOAD,
     LOCAL,
@@ -442,12 +453,15 @@ define_keywords!(
     LOCKED,
     LOGIN,
     LOGS,
+    LONGBLOB,
+    LONGTEXT,
     LOWCARDINALITY,
     LOWER,
     LOW_PRIORITY,
     MACRO,
     MANAGEDLOCATION,
     MAP,
+    MASKING,
     MATCH,
     MATCHED,
     MATCHES,
@@ -459,7 +473,9 @@ define_keywords!(
     MAXVALUE,
     MAX_DATA_EXTENSION_TIME_IN_DAYS,
     MEASURES,
+    MEDIUMBLOB,
     MEDIUMINT,
+    MEDIUMTEXT,
     MEMBER,
     MERGE,
     METADATA,
@@ -499,12 +515,14 @@ define_keywords!(
     NOINHERIT,
     NOLOGIN,
     NONE,
+    NOORDER,
     NOREPLICATION,
     NORMALIZE,
     NOSCAN,
     NOSUPERUSER,
     NOT,
     NOTHING,
+    NOTIFY,
     NOWAIT,
     NO_WRITE_TO_BINLOG,
     NTH_VALUE,
@@ -527,6 +545,7 @@ define_keywords!(
     ONE,
     ONLY,
     OPEN,
+    OPENJSON,
     OPERATOR,
     OPTIMIZE,
     OPTIMIZER_COSTS,
@@ -563,9 +582,11 @@ define_keywords!(
     PERCENTILE_DISC,
     PERCENT_RANK,
     PERIOD,
+    PERMISSIVE,
     PERSISTENT,
     PIVOT,
     PLACING,
+    PLAN,
     PLANS,
     POLICY,
     PORTION,
@@ -629,6 +650,7 @@ define_keywords!(
     RESTART,
     RESTRICT,
     RESTRICTED,
+    RESTRICTIVE,
     RESULT,
     RESULTSET,
     RETAIN,
@@ -652,6 +674,7 @@ define_keywords!(
     SAFE_CAST,
     SAVEPOINT,
     SCHEMA,
+    SCHEMAS,
     SCOPE,
     SCROLL,
     SEARCH,
@@ -695,6 +718,7 @@ define_keywords!(
     STABLE,
     STAGE,
     START,
+    STARTS,
     STATEMENT,
     STATIC,
     STATISTICS,
@@ -731,6 +755,7 @@ define_keywords!(
     TEMP,
     TEMPORARY,
     TERMINATED,
+    TERSE,
     TEXT,
     TEXTFILE,
     THEN,
@@ -744,7 +769,9 @@ define_keywords!(
     TIMEZONE_HOUR,
     TIMEZONE_MINUTE,
     TIMEZONE_REGION,
+    TINYBLOB,
     TINYINT,
+    TINYTEXT,
     TO,
     TOP,
     TOTALS,
@@ -761,6 +788,7 @@ define_keywords!(
     TRUE,
     TRUNCATE,
     TRY_CAST,
+    TRY_CONVERT,
     TUPLE,
     TYPE,
     UESCAPE,
@@ -777,6 +805,7 @@ define_keywords!(
     UNION,
     UNIQUE,
     UNKNOWN,
+    UNLISTEN,
     UNLOAD,
     UNLOCK,
     UNLOGGED,
@@ -811,6 +840,7 @@ define_keywords!(
     VERSION,
     VERSIONING,
     VIEW,
+    VIEWS,
     VIRTUAL,
     VOLATILE,
     WAREHOUSE,
@@ -870,6 +900,8 @@ pub const RESERVED_FOR_TABLE_ALIAS: &[Keyword] = &[
     Keyword::CLUSTER,
     Keyword::DISTRIBUTE,
     Keyword::GLOBAL,
+    Keyword::ANTI,
+    Keyword::SEMI,
     // for MSSQL-specific OUTER APPLY (seems reserved in most dialects)
     Keyword::OUTER,
     Keyword::SET,
@@ -921,4 +953,14 @@ pub const RESERVED_FOR_COLUMN_ALIAS: &[Keyword] = &[
     Keyword::FROM,
     Keyword::INTO,
     Keyword::END,
+];
+
+/// Global list of reserved keywords that cannot be parsed as identifiers
+/// without special handling like quoting. Parser should call `Dialect::is_reserved_for_identifier`
+/// to allow for each dialect to customize the list.
+pub const RESERVED_FOR_IDENTIFIER: &[Keyword] = &[
+    Keyword::EXISTS,
+    Keyword::INTERVAL,
+    Keyword::STRUCT,
+    Keyword::TRIM,
 ];
