@@ -1,35 +1,39 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[macro_use]
 mod test_utils;
 
+use helpers::attached_token::AttachedToken;
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 use sqlparser::ast::*;
 use sqlparser::dialect::{DuckDbDialect, GenericDialect};
 
 fn duckdb() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DuckDbDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(DuckDbDialect {})])
 }
 
 fn duckdb_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DuckDbDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(DuckDbDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -237,7 +241,7 @@ fn test_create_table_macro() {
             MacroArg::new("col1_value"),
             MacroArg::new("col2_value"),
         ]),
-        definition: MacroDefinition::Table(duckdb().verified_query(query)),
+        definition: MacroDefinition::Table(duckdb().verified_query(query).into()),
     };
     assert_eq!(expected, macro_);
 }
@@ -257,21 +261,18 @@ fn test_select_union_by_name() {
             op: SetOperator::Union,
             set_quantifier: *expected_quantifier,
             left: Box::<SetExpr>::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
-                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions {
-                    opt_ilike: None,
-                    opt_exclude: None,
-                    opt_except: None,
-                    opt_rename: None,
-                    opt_replace: None,
-                })],
+                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
                     relation: TableFactor::Table {
                         name: ObjectName(vec![Ident {
                             value: "capitals".to_string(),
                             quote_style: None,
+                            span: Span::empty(),
                         }]),
                         alias: None,
                         args: None,
@@ -279,6 +280,7 @@ fn test_select_union_by_name() {
                         version: None,
                         partitions: vec![],
                         with_ordinality: false,
+                        json_path: None,
                     },
                     joins: vec![],
                 }],
@@ -297,21 +299,18 @@ fn test_select_union_by_name() {
                 connect_by: None,
             }))),
             right: Box::<SetExpr>::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
-                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions {
-                    opt_ilike: None,
-                    opt_exclude: None,
-                    opt_except: None,
-                    opt_rename: None,
-                    opt_replace: None,
-                })],
+                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
                     relation: TableFactor::Table {
                         name: ObjectName(vec![Ident {
                             value: "weather".to_string(),
                             quote_style: None,
+                            span: Span::empty(),
                         }]),
                         alias: None,
                         args: None,
@@ -319,6 +318,7 @@ fn test_select_union_by_name() {
                         version: None,
                         partitions: vec![],
                         with_ordinality: false,
+                        json_path: None,
                     },
                     joins: vec![],
                 }],
@@ -349,7 +349,8 @@ fn test_duckdb_install() {
         Statement::Install {
             extension_name: Ident {
                 value: "tpch".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty()
             }
         }
     );
@@ -362,7 +363,8 @@ fn test_duckdb_load_extension() {
         Statement::Load {
             extension_name: Ident {
                 value: "my_extension".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty()
             }
         },
         stmt

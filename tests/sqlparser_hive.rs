@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 
@@ -16,9 +21,10 @@
 //! is also tested (on the inputs it can handle).
 
 use sqlparser::ast::{
-    ClusteredBy, CommentDef, CreateFunctionBody, CreateFunctionUsing, CreateTable, Expr, Function,
-    FunctionArgumentList, FunctionArguments, Ident, ObjectName, OneOrManyWithParens, OrderByExpr,
-    SelectItem, Statement, TableFactor, UnaryOperator, Use, Value,
+    ClusteredBy, CommentDef, CreateFunction, CreateFunctionBody, CreateFunctionUsing, CreateTable,
+    Expr, Function, FunctionArgumentList, FunctionArguments, Ident, ObjectName,
+    OneOrManyWithParens, OrderByExpr, SelectItem, Statement, TableFactor, UnaryOperator, Use,
+    Value,
 };
 use sqlparser::dialect::{GenericDialect, HiveDialect, MsSqlDialect};
 use sqlparser::parser::ParserError;
@@ -387,13 +393,13 @@ fn set_statement_with_minus() {
 fn parse_create_function() {
     let sql = "CREATE TEMPORARY FUNCTION mydb.myfunc AS 'org.random.class.Name' USING JAR 'hdfs://somewhere.com:8020/very/far'";
     match hive().verified_stmt(sql) {
-        Statement::CreateFunction {
+        Statement::CreateFunction(CreateFunction {
             temporary,
             name,
             function_body,
             using,
             ..
-        } => {
+        }) => {
             assert!(temporary);
             assert_eq!(name.to_string(), "mydb.myfunc");
             assert_eq!(
@@ -413,10 +419,7 @@ fn parse_create_function() {
     }
 
     // Test error in dialect that doesn't support parsing CREATE FUNCTION
-    let unsupported_dialects = TestedDialects {
-        dialects: vec![Box::new(MsSqlDialect {})],
-        options: None,
-    };
+    let unsupported_dialects = TestedDialects::new(vec![Box::new(MsSqlDialect {})]);
 
     assert_eq!(
         unsupported_dialects.parse_sql_statements(sql).unwrap_err(),
@@ -455,6 +458,7 @@ fn parse_delimited_identifiers() {
             version,
             with_ordinality: _,
             partitions: _,
+            json_path: _,
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
@@ -533,15 +537,9 @@ fn parse_use() {
 }
 
 fn hive() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(HiveDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(HiveDialect {})])
 }
 
 fn hive_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(HiveDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(HiveDialect {}), Box::new(GenericDialect {})])
 }

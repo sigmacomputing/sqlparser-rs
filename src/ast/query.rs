@@ -1,25 +1,34 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
+use helpers::attached_token::AttachedToken;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "visitor")]
 use sqlparser_derive::{Visit, VisitMut};
 
-use crate::ast::*;
+use crate::{
+    ast::*,
+    tokenizer::{Token, TokenWithSpan},
+};
 
 /// The most complete variant of a `SELECT` query expression, optionally
 /// including `WITH`, `UNION` / other set operations, and `ORDER BY`.
@@ -271,9 +280,14 @@ impl fmt::Display for Table {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct Select {
+    /// Token for the `SELECT` keyword
+    pub select_token: AttachedToken,
+    /// `SELECT [DISTINCT] ...`
     pub distinct: Option<Distinct>,
     /// MSSQL syntax: `TOP (<N>) [ PERCENT ] [ WITH TIES ]`
     pub top: Option<Top>,
+    /// Whether the top was located before `ALL`/`DISTINCT`
+    pub top_before_distinct: bool,
     /// projection expressions
     pub projection: Vec<SelectItem>,
     /// INTO
@@ -322,12 +336,20 @@ impl fmt::Display for Select {
             write!(f, " {value_table_mode}")?;
         }
 
+        if let Some(ref top) = self.top {
+            if self.top_before_distinct {
+                write!(f, " {top}")?;
+            }
+        }
         if let Some(ref distinct) = self.distinct {
             write!(f, " {distinct}")?;
         }
         if let Some(ref top) = self.top {
-            write!(f, " {top}")?;
+            if !self.top_before_distinct {
+                write!(f, " {top}")?;
+            }
         }
+
         write!(f, " {}", display_comma_separated(&self.projection))?;
 
         if let Some(ref into) = self.into {
@@ -490,6 +512,8 @@ impl fmt::Display for NamedWindowDefinition {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct With {
+    /// Token for the "WITH" keyword
+    pub with_token: AttachedToken,
     pub recursive: bool,
     pub cte_tables: Vec<Cte>,
 }
@@ -541,6 +565,8 @@ pub struct Cte {
     pub query: Box<Query>,
     pub from: Option<Ident>,
     pub materialized: Option<CteAsMaterialized>,
+    /// Token for the closing parenthesis
+    pub closing_paren_token: AttachedToken,
 }
 
 impl fmt::Display for Cte {
@@ -592,10 +618,12 @@ impl fmt::Display for IdentWithAlias {
 }
 
 /// Additional options for wildcards, e.g. Snowflake `EXCLUDE`/`RENAME` and Bigquery `EXCEPT`.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct WildcardAdditionalOptions {
+    /// The wildcard token `*`
+    pub wildcard_token: AttachedToken,
     /// `[ILIKE...]`.
     ///  Snowflake syntax: <https://docs.snowflake.com/en/sql-reference/sql/select#parameters>
     pub opt_ilike: Option<IlikeSelectItem>,
@@ -611,6 +639,19 @@ pub struct WildcardAdditionalOptions {
     pub opt_replace: Option<ReplaceSelectItem>,
     /// `[RENAME ...]`.
     pub opt_rename: Option<RenameSelectItem>,
+}
+
+impl Default for WildcardAdditionalOptions {
+    fn default() -> Self {
+        Self {
+            wildcard_token: TokenWithSpan::wrap(Token::Mul).into(),
+            opt_ilike: None,
+            opt_exclude: None,
+            opt_except: None,
+            opt_replace: None,
+            opt_rename: None,
+        }
+    }
 }
 
 impl fmt::Display for WildcardAdditionalOptions {
@@ -959,6 +1000,8 @@ pub enum TableFactor {
         with_ordinality: bool,
         /// [Partition selection](https://dev.mysql.com/doc/refman/8.0/en/partitioning-selection.html), supported by MySQL.
         partitions: Vec<Ident>,
+        /// Optional PartiQL JsonPath: <https://partiql.org/dql/from.html>
+        json_path: Option<JsonPath>,
     },
     Derived {
         lateral: bool,
@@ -1018,6 +1061,27 @@ pub enum TableFactor {
         /// The columns to be extracted from each element of the array or object.
         /// Each column must have a name and a type.
         columns: Vec<JsonTableColumn>,
+        /// The alias for the table.
+        alias: Option<TableAlias>,
+    },
+    /// The MSSQL's `OPENJSON` table-valued function.
+    ///
+    /// ```sql
+    /// OPENJSON( jsonExpression [ , path ] )  [ <with_clause> ]
+    ///
+    /// <with_clause> ::= WITH ( { colName type [ column_path ] [ AS JSON ] } [ ,...n ] )
+    /// ````
+    ///
+    /// Reference: <https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql?view=sql-server-ver16#syntax>
+    OpenJsonTable {
+        /// The JSON expression to be evaluated. It must evaluate to a json string
+        json_expr: Expr,
+        /// The path to the array or object to be iterated over.
+        /// It must evaluate to a json array or object.
+        json_path: Option<Value>,
+        /// The columns to be extracted from each element of the array or object.
+        /// Each column must have a name and a type.
+        columns: Vec<OpenJsonTableColumn>,
         /// The alias for the table.
         alias: Option<TableAlias>,
     },
@@ -1098,7 +1162,7 @@ pub enum PivotValueSource {
     /// Pivot on all values returned by a subquery.
     ///
     /// See <https://docs.snowflake.com/en/sql-reference/constructs/pivot#pivot-on-column-values-using-a-subquery-with-dynamic-pivot>.
-    Subquery(Query),
+    Subquery(Box<Query>),
 }
 
 impl fmt::Display for PivotValueSource {
@@ -1339,8 +1403,12 @@ impl fmt::Display for TableFactor {
                 version,
                 partitions,
                 with_ordinality,
+                json_path,
             } => {
                 write!(f, "{name}")?;
+                if let Some(json_path) = json_path {
+                    write!(f, "{json_path}")?;
+                }
                 if !partitions.is_empty() {
                     write!(f, "PARTITION ({})", display_comma_separated(partitions))?;
                 }
@@ -1446,6 +1514,25 @@ impl fmt::Display for TableFactor {
                 }
                 Ok(())
             }
+            TableFactor::OpenJsonTable {
+                json_expr,
+                json_path,
+                columns,
+                alias,
+            } => {
+                write!(f, "OPENJSON({json_expr}")?;
+                if let Some(json_path) = json_path {
+                    write!(f, ", {json_path}")?;
+                }
+                write!(f, ")")?;
+                if !columns.is_empty() {
+                    write!(f, " WITH ({})", display_comma_separated(columns))?;
+                }
+                if let Some(alias) = alias {
+                    write!(f, " AS {alias}")?;
+                }
+                Ok(())
+            }
             TableFactor::NestedJoin {
                 table_with_joins,
                 alias,
@@ -1542,7 +1629,7 @@ impl fmt::Display for TableFactor {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct TableAlias {
     pub name: Ident,
-    pub columns: Vec<Ident>,
+    pub columns: Vec<TableAliasColumnDef>,
 }
 
 impl fmt::Display for TableAlias {
@@ -1550,6 +1637,41 @@ impl fmt::Display for TableAlias {
         write!(f, "{}", self.name)?;
         if !self.columns.is_empty() {
             write!(f, " ({})", display_comma_separated(&self.columns))?;
+        }
+        Ok(())
+    }
+}
+
+/// SQL column definition in a table expression alias.
+/// Most of the time, the data type is not specified.
+/// But some table-valued functions do require specifying the data type.
+///
+/// See <https://www.postgresql.org/docs/17/queries-table-expressions.html#QUERIES-TABLEFUNCTIONS>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct TableAliasColumnDef {
+    /// Column name alias
+    pub name: Ident,
+    /// Some table-valued functions require specifying the data type in the alias.
+    pub data_type: Option<DataType>,
+}
+
+impl TableAliasColumnDef {
+    /// Create a new table alias column definition with only a name and no type
+    pub fn from_name<S: Into<String>>(name: S) -> Self {
+        TableAliasColumnDef {
+            name: Ident::new(name),
+            data_type: None,
+        }
+    }
+}
+
+impl fmt::Display for TableAliasColumnDef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(ref data_type) = self.data_type {
+            write!(f, " {}", data_type)?;
         }
         Ok(())
     }
@@ -1592,7 +1714,7 @@ impl fmt::Display for Join {
         }
         fn suffix(constraint: &'_ JoinConstraint) -> impl fmt::Display + '_ {
             struct Suffix<'a>(&'a JoinConstraint);
-            impl<'a> fmt::Display for Suffix<'a> {
+            impl fmt::Display for Suffix<'_> {
                 fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                     match self.0 {
                         JoinConstraint::On(expr) => write!(f, " ON {expr}"),
@@ -1639,6 +1761,13 @@ impl fmt::Display for Join {
                 suffix(constraint)
             ),
             JoinOperator::CrossJoin => write!(f, " CROSS JOIN {}", self.relation),
+            JoinOperator::Semi(constraint) => write!(
+                f,
+                " {}SEMI JOIN {}{}",
+                prefix(constraint),
+                self.relation,
+                suffix(constraint)
+            ),
             JoinOperator::LeftSemi(constraint) => write!(
                 f,
                 " {}LEFT SEMI JOIN {}{}",
@@ -1649,6 +1778,13 @@ impl fmt::Display for Join {
             JoinOperator::RightSemi(constraint) => write!(
                 f,
                 " {}RIGHT SEMI JOIN {}{}",
+                prefix(constraint),
+                self.relation,
+                suffix(constraint)
+            ),
+            JoinOperator::Anti(constraint) => write!(
+                f,
+                " {}ANTI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
@@ -1691,10 +1827,14 @@ pub enum JoinOperator {
     RightOuter(JoinConstraint),
     FullOuter(JoinConstraint),
     CrossJoin,
+    /// SEMI (non-standard)
+    Semi(JoinConstraint),
     /// LEFT SEMI (non-standard)
     LeftSemi(JoinConstraint),
     /// RIGHT SEMI (non-standard)
     RightSemi(JoinConstraint),
+    /// ANTI (non-standard)
+    Anti(JoinConstraint),
     /// LEFT ANTI (non-standard)
     LeftAnti(JoinConstraint),
     /// RIGHT ANTI (non-standard)
@@ -2271,19 +2411,84 @@ impl fmt::Display for ForJson {
 }
 
 /// A single column definition in MySQL's `JSON_TABLE` table valued function.
+///
+/// See
+/// - [MySQL's JSON_TABLE documentation](https://dev.mysql.com/doc/refman/8.0/en/json-table-functions.html#function_json-table)
+/// - [Oracle's JSON_TABLE documentation](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/JSON_TABLE.html)
+/// - [MariaDB's JSON_TABLE documentation](https://mariadb.com/kb/en/json_table/)
+///
 /// ```sql
 /// SELECT *
 /// FROM JSON_TABLE(
 ///     '["a", "b"]',
 ///     '$[*]' COLUMNS (
-///         value VARCHAR(20) PATH '$'
+///         name FOR ORDINALITY,
+///         value VARCHAR(20) PATH '$',
+///         NESTED PATH '$[*]' COLUMNS (
+///             value VARCHAR(20) PATH '$'
+///         )
 ///     )
 /// ) AS jt;
 /// ```
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct JsonTableColumn {
+pub enum JsonTableColumn {
+    /// A named column with a JSON path
+    Named(JsonTableNamedColumn),
+    /// The FOR ORDINALITY column, which is a special column that returns the index of the current row in a JSON array.
+    ForOrdinality(Ident),
+    /// A set of nested columns, which extracts data from a nested JSON array.
+    Nested(JsonTableNestedColumn),
+}
+
+impl fmt::Display for JsonTableColumn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JsonTableColumn::Named(json_table_named_column) => {
+                write!(f, "{json_table_named_column}")
+            }
+            JsonTableColumn::ForOrdinality(ident) => write!(f, "{} FOR ORDINALITY", ident),
+            JsonTableColumn::Nested(json_table_nested_column) => {
+                write!(f, "{json_table_nested_column}")
+            }
+        }
+    }
+}
+
+/// A nested column in a JSON_TABLE column list
+///
+/// See <https://mariadb.com/kb/en/json_table/#nested-paths>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct JsonTableNestedColumn {
+    pub path: Value,
+    pub columns: Vec<JsonTableColumn>,
+}
+
+impl fmt::Display for JsonTableNestedColumn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "NESTED PATH {} COLUMNS ({})",
+            self.path,
+            display_comma_separated(&self.columns)
+        )
+    }
+}
+
+/// A single column definition in MySQL's `JSON_TABLE` table valued function.
+///
+/// See <https://mariadb.com/kb/en/json_table/#path-columns>
+///
+/// ```sql
+///         value VARCHAR(20) PATH '$'
+/// ```
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct JsonTableNamedColumn {
     /// The name of the column to be extracted.
     pub name: Ident,
     /// The type of the column to be extracted.
@@ -2298,7 +2503,7 @@ pub struct JsonTableColumn {
     pub on_error: Option<JsonTableColumnErrorHandling>,
 }
 
-impl fmt::Display for JsonTableColumn {
+impl fmt::Display for JsonTableNamedColumn {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -2338,6 +2543,40 @@ impl fmt::Display for JsonTableColumnErrorHandling {
             }
             JsonTableColumnErrorHandling::Error => write!(f, "ERROR"),
         }
+    }
+}
+
+/// A single column definition in MSSQL's `OPENJSON WITH` clause.
+///
+/// ```sql
+/// colName type [ column_path ] [ AS JSON ]
+/// ```
+///
+/// Reference: <https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql?view=sql-server-ver16#syntax>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct OpenJsonTableColumn {
+    /// The name of the column to be extracted.
+    pub name: Ident,
+    /// The type of the column to be extracted.
+    pub r#type: DataType,
+    /// The path to the column to be extracted. Must be a literal string.
+    pub path: Option<String>,
+    /// The `AS JSON` option.
+    pub as_json: bool,
+}
+
+impl fmt::Display for OpenJsonTableColumn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {}", self.name, self.r#type)?;
+        if let Some(path) = &self.path {
+            write!(f, " '{}'", value::escape_single_quote_string(path))?;
+        }
+        if self.as_json {
+            write!(f, " AS JSON")?;
+        }
+        Ok(())
     }
 }
 

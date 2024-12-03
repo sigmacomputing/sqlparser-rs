@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
@@ -256,7 +261,7 @@ pub struct EscapeQuotedString<'a> {
     quote: char,
 }
 
-impl<'a> fmt::Display for EscapeQuotedString<'a> {
+impl fmt::Display for EscapeQuotedString<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // EscapeQuotedString doesn't know which mode of escape was
         // chosen by the user. So this code must to correctly display
@@ -320,7 +325,7 @@ pub fn escape_double_quote_string(s: &str) -> EscapeQuotedString<'_> {
 
 pub struct EscapeEscapedStringLiteral<'a>(&'a str);
 
-impl<'a> fmt::Display for EscapeEscapedStringLiteral<'a> {
+impl fmt::Display for EscapeEscapedStringLiteral<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for c in self.0.chars() {
             match c {
@@ -354,7 +359,7 @@ pub fn escape_escaped_string(s: &str) -> EscapeEscapedStringLiteral<'_> {
 
 pub struct EscapeUnicodeStringLiteral<'a>(&'a str);
 
-impl<'a> fmt::Display for EscapeUnicodeStringLiteral<'a> {
+impl fmt::Display for EscapeUnicodeStringLiteral<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for c in self.0.chars() {
             match c {

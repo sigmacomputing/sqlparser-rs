@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, string::String, vec::Vec};
@@ -71,6 +76,18 @@ pub enum DataType {
     /// [standard]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#binary-large-object-string-type
     /// [Oracle]: https://docs.oracle.com/javadb/10.8.3.0/ref/rrefblob.html
     Blob(Option<u64>),
+    /// [MySQL] blob with up to 2**8 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    TinyBlob,
+    /// [MySQL] blob with up to 2**24 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    MediumBlob,
+    /// [MySQL] blob with up to 2**32 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    LongBlob,
     /// Variable-length binary data with optional length.
     ///
     /// [bigquery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#bytes_type
@@ -270,6 +287,18 @@ pub enum DataType {
     Regclass,
     /// Text
     Text,
+    /// [MySQL] text with up to 2**8 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    TinyText,
+    /// [MySQL] text with up to 2**24 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    MediumText,
+    /// [MySQL] text with up to 2**32 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    LongText,
     /// String with optional length.
     String(Option<u64>),
     /// A fixed-length string e.g [ClickHouse][1].
@@ -350,6 +379,9 @@ impl fmt::Display for DataType {
                 format_type_with_optional_length(f, "VARBINARY", size, false)
             }
             DataType::Blob(size) => format_type_with_optional_length(f, "BLOB", size, false),
+            DataType::TinyBlob => write!(f, "TINYBLOB"),
+            DataType::MediumBlob => write!(f, "MEDIUMBLOB"),
+            DataType::LongBlob => write!(f, "LONGBLOB"),
             DataType::Bytes(size) => format_type_with_optional_length(f, "BYTES", size, false),
             DataType::Numeric(info) => {
                 write!(f, "NUMERIC{info}")
@@ -481,6 +513,9 @@ impl fmt::Display for DataType {
             DataType::JSONB => write!(f, "JSONB"),
             DataType::Regclass => write!(f, "REGCLASS"),
             DataType::Text => write!(f, "TEXT"),
+            DataType::TinyText => write!(f, "TINYTEXT"),
+            DataType::MediumText => write!(f, "MEDIUMTEXT"),
+            DataType::LongText => write!(f, "LONGTEXT"),
             DataType::String(size) => format_type_with_optional_length(f, "STRING", size, false),
             DataType::Bytea => write!(f, "BYTEA"),
             DataType::Array(ty) => match ty {

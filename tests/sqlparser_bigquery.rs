@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[macro_use]
 mod test_utils;
@@ -18,6 +23,7 @@ use std::ops::Deref;
 use sqlparser::ast::*;
 use sqlparser::dialect::{BigQueryDialect, GenericDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 #[test]
@@ -35,10 +41,10 @@ fn parse_literal_string() {
         r#""""triple-double\"escaped""", "#,
         r#""""triple-double"unescaped""""#,
     );
-    let dialect = TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {})],
-        options: Some(ParserOptions::new().with_unescape(false)),
-    };
+    let dialect = TestedDialects::new_with_options(
+        vec![Box::new(BigQueryDialect {})],
+        ParserOptions::new().with_unescape(false),
+    );
     let select = dialect.verified_only_select(sql);
     assert_eq!(10, select.projection.len());
     assert_eq!(
@@ -224,6 +230,7 @@ fn parse_delete_statement() {
                     version: None,
                     partitions: vec![],
                     with_ordinality: false,
+                    json_path: None,
                 },
                 from[0].relation
             );
@@ -267,10 +274,10 @@ fn parse_create_view_with_options() {
                     ViewColumnDef {
                         name: Ident::new("age"),
                         data_type: None,
-                        options: Some(vec![SqlOption::KeyValue {
+                        options: Some(vec![ColumnOption::Options(vec![SqlOption::KeyValue {
                             key: Ident::new("description"),
                             value: Expr::Value(Value::DoubleQuotedString("field age".to_string())),
-                        }])
+                        }])]),
                     },
                 ],
                 columns
@@ -672,10 +679,12 @@ fn parse_typed_struct_syntax_bigquery() {
                     Ident {
                         value: "t".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "str_col".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                 ]),
             ],
@@ -684,6 +693,7 @@ fn parse_typed_struct_syntax_bigquery() {
                     field_name: Some(Ident {
                         value: "x".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::Int64
                 },
@@ -691,6 +701,7 @@ fn parse_typed_struct_syntax_bigquery() {
                     field_name: Some(Ident {
                         value: "y".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::String(None)
                 },
@@ -703,6 +714,7 @@ fn parse_typed_struct_syntax_bigquery() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -734,6 +746,7 @@ fn parse_typed_struct_syntax_bigquery() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -981,10 +994,12 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     Ident {
                         value: "t".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "str_col".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                 ]),
             ],
@@ -993,6 +1008,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     field_name: Some(Ident {
                         value: "x".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::Int64
                 },
@@ -1000,6 +1016,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     field_name: Some(Ident {
                         value: "y".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::String(None)
                 },
@@ -1012,6 +1029,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -1043,6 +1061,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -1368,6 +1387,7 @@ fn parse_table_identifiers() {
                     version: None,
                     partitions: vec![],
                     with_ordinality: false,
+                    json_path: None,
                 },
                 joins: vec![]
             },]
@@ -1541,6 +1561,7 @@ fn parse_table_time_travel() {
                 ))),
                 partitions: vec![],
                 with_ordinality: false,
+                json_path: None,
             },
             joins: vec![]
         },]
@@ -1639,6 +1660,7 @@ fn parse_merge() {
                     version: Default::default(),
                     partitions: Default::default(),
                     with_ordinality: false,
+                    json_path: None,
                 },
                 table
             );
@@ -1654,6 +1676,7 @@ fn parse_merge() {
                     version: Default::default(),
                     partitions: Default::default(),
                     with_ordinality: false,
+                    json_path: None,
                 },
                 source
             );
@@ -1931,17 +1954,14 @@ fn parse_big_query_declare() {
 }
 
 fn bigquery() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(BigQueryDialect {})])
 }
 
 fn bigquery_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(BigQueryDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -1991,7 +2011,7 @@ fn test_bigquery_create_function() {
     let stmt = bigquery().verified_stmt(sql);
     assert_eq!(
         stmt,
-        Statement::CreateFunction {
+        Statement::CreateFunction(CreateFunction {
             or_replace: true,
             temporary: true,
             if_not_exists: false,
@@ -2016,7 +2036,7 @@ fn test_bigquery_create_function() {
             remote_connection: None,
             called_on_null: None,
             parallel: None,
-        }
+        })
     );
 
     let sqls = [
