@@ -1293,6 +1293,11 @@ impl Spanned for Expr {
                 array_expr,
                 negated: _,
             } => expr.span().union(&array_expr.span()),
+            Expr::InExpr {
+                expr,
+                in_expr,
+                negated: _,
+            } => expr.span().union(&in_expr.span()),
             Expr::Between {
                 expr,
                 negated: _,
