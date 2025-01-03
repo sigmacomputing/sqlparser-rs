@@ -669,6 +669,7 @@ fn table_constraint_unique_primary_ctor(
             columns,
             index_options,
             characteristics,
+            nulls_distinct: NullsDistinctOption::None,
         },
         None => TableConstraint::PrimaryKey {
             name,
@@ -684,7 +685,7 @@ fn table_constraint_unique_primary_ctor(
 #[test]
 fn parse_create_table_primary_and_unique_key() {
     let sqls = ["UNIQUE KEY", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE foo (id INT PRIMARY KEY AUTO_INCREMENT, bar INT NOT NULL, CONSTRAINT bar_key {key_ty} (bar))"));
+        .map(|key_ty| format!("CREATE TABLE foo (id INT PRIMARY KEY AUTO_INCREMENT, bar INT NOT NULL, CONSTRAINT bar_key {key_ty} (bar))"));
 
     let index_type_display = [Some(KeyOrIndexDisplay::Key), None];
 
@@ -752,7 +753,7 @@ fn parse_create_table_primary_and_unique_key() {
 #[test]
 fn parse_create_table_primary_and_unique_key_with_index_options() {
     let sqls = ["UNIQUE INDEX", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE foo (bar INT, var INT, CONSTRAINT constr {key_ty} index_name (bar, var) USING HASH COMMENT 'yes, ' USING BTREE COMMENT 'MySQL allows')"));
+        .map(|key_ty| format!("CREATE TABLE foo (bar INT, var INT, CONSTRAINT constr {key_ty} index_name (bar, var) USING HASH COMMENT 'yes, ' USING BTREE COMMENT 'MySQL allows')"));
 
     let index_type_display = [Some(KeyOrIndexDisplay::Index), None];
 
@@ -826,7 +827,7 @@ fn parse_create_table_primary_and_unique_key_with_index_type() {
 #[test]
 fn parse_create_table_primary_and_unique_key_characteristic_test() {
     let sqls = ["UNIQUE INDEX", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE x (y INT, CONSTRAINT constr {key_ty} (y) NOT DEFERRABLE INITIALLY IMMEDIATE)"));
+        .map(|key_ty| format!("CREATE TABLE x (y INT, CONSTRAINT constr {key_ty} (y) NOT DEFERRABLE INITIALLY IMMEDIATE)"));
     for sql in &sqls {
         mysql_and_generic().verified_stmt(sql);
     }
@@ -889,7 +890,13 @@ fn parse_create_table_set_enum() {
                     },
                     ColumnDef {
                         name: Ident::new("baz"),
-                        data_type: DataType::Enum(vec!["a".to_string(), "b".to_string()]),
+                        data_type: DataType::Enum(
+                            vec![
+                                EnumMember::Name("a".to_string()),
+                                EnumMember::Name("b".to_string())
+                            ],
+                            None
+                        ),
                         collation: None,
                         options: vec![],
                     }
@@ -1877,16 +1884,9 @@ fn parse_select_with_numeric_prefix_column_name() {
                     )))],
                     into: None,
                     from: vec![TableWithJoins {
-                        relation: TableFactor::Table {
-                            name: ObjectName(vec![Ident::with_quote('"', "table")]),
-                            alias: None,
-                            args: None,
-                            with_hints: vec![],
-                            version: None,
-                            partitions: vec![],
-                            with_ordinality: false,
-                            json_path: None,
-                        },
+                        relation: table_from_name(ObjectName(vec![Ident::with_quote(
+                            '"', "table"
+                        )])),
                         joins: vec![]
                     }],
                     lateral_views: vec![],
@@ -1936,16 +1936,9 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
                     ],
                     into: None,
                     from: vec![TableWithJoins {
-                        relation: TableFactor::Table {
-                            name: ObjectName(vec![Ident::with_quote('"', "table")]),
-                            alias: None,
-                            args: None,
-                            with_hints: vec![],
-                            version: None,
-                            partitions: vec![],
-                            with_ordinality: false,
-                            json_path: None,
-                        },
+                        relation: table_from_name(ObjectName(vec![Ident::with_quote(
+                            '"', "table"
+                        )])),
                         joins: vec![]
                     }],
                     lateral_views: vec![],
@@ -2013,6 +2006,7 @@ fn parse_update_with_joins() {
                         partitions: vec![],
                         with_ordinality: false,
                         json_path: None,
+                        sample: None,
                     },
                     joins: vec![Join {
                         relation: TableFactor::Table {
@@ -2027,6 +2021,7 @@ fn parse_update_with_joins() {
                             partitions: vec![],
                             with_ordinality: false,
                             json_path: None,
+                            sample: None,
                         },
                         global: false,
                         join_operator: JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp {
@@ -2457,20 +2452,11 @@ fn parse_substring_in_select() {
                         })],
                         into: None,
                         from: vec![TableWithJoins {
-                            relation: TableFactor::Table {
-                                name: ObjectName(vec![Ident {
-                                    value: "test".to_string(),
-                                    quote_style: None,
-                                    span: Span::empty(),
-                                }]),
-                                alias: None,
-                                args: None,
-                                with_hints: vec![],
-                                version: None,
-                                partitions: vec![],
-                                with_ordinality: false,
-                                json_path: None,
-                            },
+                            relation: table_from_name(ObjectName(vec![Ident {
+                                value: "test".to_string(),
+                                quote_style: None,
+                                span: Span::empty(),
+                            }])),
                             joins: vec![]
                         }],
                         lateral_views: vec![],
@@ -3030,4 +3016,19 @@ fn parse_longblob_type() {
     mysql_and_generic().verified_stmt("CREATE TABLE foo (bar TINYTEXT)");
     mysql_and_generic().verified_stmt("CREATE TABLE foo (bar MEDIUMTEXT)");
     mysql_and_generic().verified_stmt("CREATE TABLE foo (bar LONGTEXT)");
+}
+
+#[test]
+fn parse_begin_without_transaction() {
+    mysql().verified_stmt("BEGIN");
+}
+
+#[test]
+fn parse_double_precision() {
+    mysql().verified_stmt("CREATE TABLE foo (bar DOUBLE)");
+    mysql().verified_stmt("CREATE TABLE foo (bar DOUBLE(11,0))");
+    mysql().one_statement_parses_to(
+        "CREATE TABLE foo (bar DOUBLE(11, 0))",
+        "CREATE TABLE foo (bar DOUBLE(11,0))",
+    );
 }

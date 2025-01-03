@@ -595,6 +595,25 @@ fn parse_alter_table_constraints_rename() {
 }
 
 #[test]
+fn parse_alter_table_constraints_unique_nulls_distinct() {
+    match pg_and_generic()
+        .verified_stmt("ALTER TABLE t ADD CONSTRAINT b UNIQUE NULLS NOT DISTINCT (c)")
+    {
+        Statement::AlterTable { operations, .. } => match &operations[0] {
+            AlterTableOperation::AddConstraint(TableConstraint::Unique {
+                nulls_distinct, ..
+            }) => {
+                assert_eq!(nulls_distinct, &NullsDistinctOption::NotDistinct)
+            }
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
+    }
+    pg_and_generic().verified_stmt("ALTER TABLE t ADD CONSTRAINT b UNIQUE NULLS DISTINCT (c)");
+    pg_and_generic().verified_stmt("ALTER TABLE t ADD CONSTRAINT b UNIQUE (c)");
+}
+
+#[test]
 fn parse_alter_table_disable() {
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE ROW LEVEL SECURITY");
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE RULE rule_name");
@@ -641,6 +660,100 @@ fn parse_create_extension() {
     pg_and_generic().verified_stmt("CREATE EXTENSION extension_name WITH VERSION version CASCADE");
     pg_and_generic()
         .verified_stmt("CREATE EXTENSION extension_name WITH SCHEMA schema_name VERSION version");
+}
+
+#[test]
+fn parse_drop_extension() {
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: None,
+        }
+    );
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name, extension_name2 CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into(), "extension_name2".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name, extension_name2 RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into(), "extension_name2".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: None,
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic()
+            .verified_stmt("DROP EXTENSION IF EXISTS extension_name1, extension_name2 CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name1".into(), "extension_name2".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic()
+            .verified_stmt("DROP EXTENSION IF EXISTS extension_name1, extension_name2 RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name1".into(), "extension_name2".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
 }
 
 #[test]
@@ -2076,11 +2189,11 @@ fn parse_array_index_expr() {
     let sql = "SELECT foo[0] FROM foos";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Identifier(Ident::new("foo"))),
-            subscript: Box::new(Subscript::Index {
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("foo"))),
+            access_chain: vec![AccessExpr::Subscript(Subscript::Index {
                 index: num[0].clone()
-            }),
+            })],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2088,16 +2201,16 @@ fn parse_array_index_expr() {
     let sql = "SELECT foo[0][0] FROM foos";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Identifier(Ident::new("foo"))),
-                subscript: Box::new(Subscript::Index {
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("foo"))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
                     index: num[0].clone()
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: num[0].clone()
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[0].clone()
+                })
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2105,29 +2218,27 @@ fn parse_array_index_expr() {
     let sql = r#"SELECT bar[0]["baz"]["fooz"] FROM foos"#;
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Subscript {
-                    expr: Box::new(Expr::Identifier(Ident::new("bar"))),
-                    subscript: Box::new(Subscript::Index {
-                        index: num[0].clone()
-                    })
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("bar"))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[0].clone()
                 }),
-                subscript: Box::new(Subscript::Index {
+                AccessExpr::Subscript(Subscript::Index {
                     index: Expr::Identifier(Ident {
                         value: "baz".to_string(),
                         quote_style: Some('"'),
                         span: Span::empty(),
                     })
-                })
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: Expr::Identifier(Ident {
-                    value: "fooz".to_string(),
-                    quote_style: Some('"'),
-                    span: Span::empty(),
-                })
-            })
+                }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: Expr::Identifier(Ident {
+                        value: "fooz".to_string(),
+                        quote_style: Some('"'),
+                        span: Span::empty(),
+                    })
+                }),
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2135,33 +2246,33 @@ fn parse_array_index_expr() {
     let sql = "SELECT (CAST(ARRAY[ARRAY[2, 3]] AS INT[][]))[1][2]";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Nested(Box::new(Expr::Cast {
-                    kind: CastKind::Cast,
-                    expr: Box::new(Expr::Array(Array {
-                        elem: vec![Expr::Array(Array {
-                            elem: vec![num[2].clone(), num[3].clone(),],
-                            named: true,
-                        })],
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Nested(Box::new(Expr::Cast {
+                kind: CastKind::Cast,
+                expr: Box::new(Expr::Array(Array {
+                    elem: vec![Expr::Array(Array {
+                        elem: vec![num[2].clone(), num[3].clone(),],
                         named: true,
-                    })),
-                    data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
-                        Box::new(DataType::Array(ArrayElemTypeDef::SquareBracket(
-                            Box::new(DataType::Int(None)),
-                            None
-                        ))),
+                    })],
+                    named: true,
+                })),
+                data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
+                    Box::new(DataType::Array(ArrayElemTypeDef::SquareBracket(
+                        Box::new(DataType::Int(None)),
                         None
-                    )),
-                    format: None,
-                }))),
-                subscript: Box::new(Subscript::Index {
+                    ))),
+                    None
+                )),
+                format: None,
+            }))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
                     index: num[1].clone()
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: num[2].clone()
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[2].clone()
+                }),
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2250,8 +2361,12 @@ fn parse_array_subscript() {
         ),
     ];
     for (sql, expect) in tests {
-        let Expr::Subscript { subscript, .. } = pg_and_generic().verified_expr(sql) else {
+        let Expr::CompoundFieldAccess { access_chain, .. } = pg_and_generic().verified_expr(sql)
+        else {
             panic!("expected subscript expr");
+        };
+        let Some(AccessExpr::Subscript(subscript)) = access_chain.last() else {
+            panic!("expected subscript");
         };
         assert_eq!(expect, *subscript);
     }
@@ -2263,25 +2378,25 @@ fn parse_array_subscript() {
 fn parse_array_multi_subscript() {
     let expr = pg_and_generic().verified_expr("make_array(1, 2, 3)[1:2][2]");
     assert_eq!(
-        Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(call(
-                    "make_array",
-                    vec![
-                        Expr::Value(number("1")),
-                        Expr::Value(number("2")),
-                        Expr::Value(number("3"))
-                    ]
-                )),
-                subscript: Box::new(Subscript::Slice {
+        Expr::CompoundFieldAccess {
+            root: Box::new(call(
+                "make_array",
+                vec![
+                    Expr::Value(number("1")),
+                    Expr::Value(number("2")),
+                    Expr::Value(number("3"))
+                ]
+            )),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Slice {
                     lower_bound: Some(Expr::Value(number("1"))),
                     upper_bound: Some(Expr::Value(number("2"))),
                     stride: None,
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: Expr::Value(number("2")),
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: Expr::Value(number("2")),
+                }),
+            ],
         },
         expr,
     );
@@ -2510,6 +2625,7 @@ fn parse_array_subquery_expr() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("ARRAY")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::Subquery(Box::new(Query {
                 with: None,
@@ -2892,6 +3008,7 @@ fn test_composite_value() {
                     Ident::new("information_schema"),
                     Ident::new("_pg_expandarray")
                 ]),
+                uses_odbc_syntax: false,
                 parameters: FunctionArguments::None,
                 args: FunctionArguments::List(FunctionArgumentList {
                     duplicate_treatment: None,
@@ -3069,6 +3186,7 @@ fn parse_current_functions() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("CURRENT_CATALOG")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::None,
             null_treatment: None,
@@ -3081,6 +3199,7 @@ fn parse_current_functions() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("CURRENT_USER")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::None,
             null_treatment: None,
@@ -3093,6 +3212,7 @@ fn parse_current_functions() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("SESSION_USER")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::None,
             null_treatment: None,
@@ -3105,6 +3225,7 @@ fn parse_current_functions() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("USER")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::None,
             null_treatment: None,
@@ -3556,9 +3677,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
-            with_ordinality: _,
-            partitions: _,
-            json_path: _,
+            ..
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
@@ -3580,6 +3699,7 @@ fn parse_delimited_identifiers() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,

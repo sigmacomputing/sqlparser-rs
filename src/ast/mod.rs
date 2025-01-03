@@ -40,18 +40,21 @@ use sqlparser_derive::{Visit, VisitMut};
 use crate::tokenizer::Span;
 
 pub use self::data_type::{
-    ArrayElemTypeDef, CharLengthUnits, CharacterLength, DataType, ExactNumberInfo,
+    ArrayElemTypeDef, CharLengthUnits, CharacterLength, DataType, EnumMember, ExactNumberInfo,
     StructBracketKind, TimezoneInfo,
 };
-pub use self::dcl::{AlterRoleOperation, ResetConfig, RoleOption, SetConfigValue, Use};
+pub use self::dcl::{
+    AlterRoleOperation, ResetConfig, RoleOption, SecondaryRoles, SetConfigValue, Use,
+};
 pub use self::ddl::{
     AlterColumnOperation, AlterIndexOperation, AlterPolicyOperation, AlterTableOperation,
     ClusteredBy, ColumnDef, ColumnOption, ColumnOptionDef, ColumnPolicy, ColumnPolicyProperty,
     ConstraintCharacteristics, CreateFunction, Deduplicate, DeferrableInitial, GeneratedAs,
     GeneratedExpressionMode, IdentityParameters, IdentityProperty, IdentityPropertyFormatKind,
-    IdentityPropertyKind, IdentityPropertyOrder, IndexOption, IndexType, KeyOrIndexDisplay, Owner,
-    Partition, ProcedureParam, ReferentialAction, TableConstraint, TagsColumnOption,
-    UserDefinedTypeCompositeAttributeDef, UserDefinedTypeRepresentation, ViewColumnDef,
+    IdentityPropertyKind, IdentityPropertyOrder, IndexOption, IndexType, KeyOrIndexDisplay,
+    NullsDistinctOption, Owner, Partition, ProcedureParam, ReferentialAction, TableConstraint,
+    TagsColumnOption, UserDefinedTypeCompositeAttributeDef, UserDefinedTypeRepresentation,
+    ViewColumnDef,
 };
 pub use self::dml::{CreateIndex, CreateTable, Delete, Insert};
 pub use self::operator::{BinaryOperator, UnaryOperator};
@@ -66,8 +69,11 @@ pub use self::query::{
     OrderBy, OrderByExpr, PivotValueSource, ProjectionSelect, Query, RenameSelectItem,
     RepetitionQuantifier, ReplaceSelectElement, ReplaceSelectItem, RowsPerMatch, Select,
     SelectInto, SelectItem, SetExpr, SetOperator, SetQuantifier, Setting, SymbolDefinition, Table,
-    TableAlias, TableAliasColumnDef, TableFactor, TableFunctionArgs, TableVersion, TableWithJoins,
-    Top, TopQuantity, ValueTableMode, Values, WildcardAdditionalOptions, With, WithFill,
+    TableAlias, TableAliasColumnDef, TableFactor, TableFunctionArgs, TableSample,
+    TableSampleBucket, TableSampleKind, TableSampleMethod, TableSampleModifier,
+    TableSampleQuantity, TableSampleSeed, TableSampleSeedModifier, TableSampleUnit, TableVersion,
+    TableWithJoins, Top, TopQuantity, UpdateTableFromKind, ValueTableMode, Values,
+    WildcardAdditionalOptions, With, WithFill,
 };
 
 pub use self::trigger::{
@@ -453,40 +459,6 @@ pub enum CastFormat {
     ValueAtTimeZone(Value, Value),
 }
 
-/// Represents the syntax/style used in a map access.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
-pub enum MapAccessSyntax {
-    /// Access using bracket notation. `mymap[mykey]`
-    Bracket,
-    /// Access using period notation. `mymap.mykey`
-    Period,
-}
-
-/// Expression used to access a value in a nested structure.
-///
-/// Example: `SAFE_OFFSET(0)` in
-/// ```sql
-/// SELECT mymap[SAFE_OFFSET(0)];
-/// ```
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
-pub struct MapAccessKey {
-    pub key: Expr,
-    pub syntax: MapAccessSyntax,
-}
-
-impl fmt::Display for MapAccessKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.syntax {
-            MapAccessSyntax::Bracket => write!(f, "[{}]", self.key),
-            MapAccessSyntax::Period => write!(f, ".{}", self.key),
-        }
-    }
-}
-
 /// An element of a JSON path.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -623,6 +595,28 @@ pub enum Expr {
     Identifier(Ident),
     /// Multi-part identifier, e.g. `table_alias.column` or `schema.table.col`
     CompoundIdentifier(Vec<Ident>),
+    /// Multi-part expression access.
+    ///
+    /// This structure represents an access chain in structured / nested types
+    /// such as maps, arrays, and lists:
+    /// - Array
+    ///     - A 1-dim array `a[1]` will be represented like:
+    ///         `CompoundFieldAccess(Ident('a'), vec![Subscript(1)]`
+    ///     - A 2-dim array `a[1][2]` will be represented like:
+    ///         `CompoundFieldAccess(Ident('a'), vec![Subscript(1), Subscript(2)]`
+    /// - Map or Struct (Bracket-style)
+    ///     - A map `a['field1']` will be represented like:
+    ///         `CompoundFieldAccess(Ident('a'), vec![Subscript('field')]`
+    ///     - A 2-dim map `a['field1']['field2']` will be represented like:
+    ///         `CompoundFieldAccess(Ident('a'), vec![Subscript('field1'), Subscript('field2')]`
+    /// - Struct (Dot-style) (only effect when the chain contains both subscript and expr)
+    ///     - A struct access `a[field1].field2` will be represented like:
+    ///         `CompoundFieldAccess(Ident('a'), vec![Subscript('field1'), Ident('field2')]`
+    /// - If a struct access likes `a.field1.field2`, it will be represented by CompoundIdentifier([a, field1, field2])
+    CompoundFieldAccess {
+        root: Box<Expr>,
+        access_chain: Vec<AccessExpr>,
+    },
     /// Access data nested in a value containing semi-structured data, such as
     /// the `VARIANT` type on Snowflake. for example `src:customer[0].name`.
     ///
@@ -634,7 +628,7 @@ pub enum Expr {
         /// The path to the data to extract.
         path: JsonPath,
     },
-    /// CompositeAccess (postgres) eg: SELECT (information_schema._pg_expandarray(array['i','i'])).n
+    /// CompositeAccess eg: SELECT foo(bar).z, (information_schema._pg_expandarray(array['i','i'])).n
     CompositeAccess {
         expr: Box<Expr>,
         key: Ident,
@@ -883,14 +877,6 @@ pub enum Expr {
         data_type: DataType,
         value: String,
     },
-    /// Access a map-like object by field (e.g. `column['field']` or `column[4]`
-    /// Note that depending on the dialect, struct like accesses may be
-    /// parsed as [`Subscript`](Self::Subscript) or [`MapAccess`](Self::MapAccess)
-    /// <https://clickhouse.com/docs/en/sql-reference/data-types/map/>
-    MapAccess {
-        column: Box<Expr>,
-        keys: Vec<MapAccessKey>,
-    },
     /// Scalar function call e.g. `LEFT(foo, 5)`
     Function(Function),
     /// Arbitrary expr method call
@@ -979,11 +965,6 @@ pub enum Expr {
     /// ```
     /// [1]: https://duckdb.org/docs/sql/data_types/map#creating-maps
     Map(Map),
-    /// An access of nested data using subscript syntax, for example `array[2]`.
-    Subscript {
-        expr: Box<Expr>,
-        subscript: Box<Subscript>,
-    },
     /// An array expression e.g. `ARRAY[1, 2]`
     Array(Array),
     /// An interval expression e.g. `INTERVAL '1' YEAR`
@@ -1096,6 +1077,27 @@ impl fmt::Display for Subscript {
                 }
                 Ok(())
             }
+        }
+    }
+}
+
+/// An element of a [`Expr::CompoundFieldAccess`].
+/// It can be an expression or a subscript.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum AccessExpr {
+    /// Accesses a field using dot notation, e.g. `foo.bar.baz`.
+    Dot(Expr),
+    /// Accesses a field or array element using bracket notation, e.g. `foo['bar']`.
+    Subscript(Subscript),
+}
+
+impl fmt::Display for AccessExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AccessExpr::Dot(expr) => write!(f, ".{}", expr),
+            AccessExpr::Subscript(subscript) => write!(f, "[{}]", subscript),
         }
     }
 }
@@ -1292,15 +1294,20 @@ impl fmt::Display for CastFormat {
 }
 
 impl fmt::Display for Expr {
+    #[cfg_attr(feature = "recursive-protection", recursive::recursive)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Expr::Identifier(s) => write!(f, "{s}"),
-            Expr::MapAccess { column, keys } => {
-                write!(f, "{column}{}", display_separated(keys, ""))
-            }
             Expr::Wildcard(_) => f.write_str("*"),
             Expr::QualifiedWildcard(prefix, _) => write!(f, "{}.*", prefix),
             Expr::CompoundIdentifier(s) => write!(f, "{}", display_separated(s, ".")),
+            Expr::CompoundFieldAccess { root, access_chain } => {
+                write!(f, "{}", root)?;
+                for field in access_chain {
+                    write!(f, "{}", field)?;
+                }
+                Ok(())
+            }
             Expr::IsTrue(ast) => write!(f, "{ast} IS TRUE"),
             Expr::IsNotTrue(ast) => write!(f, "{ast} IS NOT TRUE"),
             Expr::IsFalse(ast) => write!(f, "{ast} IS FALSE"),
@@ -1730,12 +1737,6 @@ impl fmt::Display for Expr {
             }
             Expr::Map(map) => {
                 write!(f, "{map}")
-            }
-            Expr::Subscript {
-                expr,
-                subscript: key,
-            } => {
-                write!(f, "{expr}[{key}]")
             }
             Expr::Array(set) => {
                 write!(f, "{set}")
@@ -2366,6 +2367,7 @@ pub enum Statement {
         cache_metadata: bool,
         noscan: bool,
         compute_statistics: bool,
+        has_table_keyword: bool,
     },
     /// ```sql
     /// TRUNCATE
@@ -2489,7 +2491,7 @@ pub enum Statement {
         /// Column assignments
         assignments: Vec<Assignment>,
         /// Table which provide value to be set
-        from: Option<TableWithJoins>,
+        from: Option<UpdateTableFromKind>,
         /// WHERE
         selection: Option<Expr>,
         /// RETURNING
@@ -2771,6 +2773,18 @@ pub enum Statement {
         version: Option<Ident>,
     },
     /// ```sql
+    /// DROP EXTENSION [ IF EXISTS ] name [, ...] [ CASCADE | RESTRICT ]
+    ///
+    /// Note: this is a PostgreSQL-specific statement.
+    /// https://www.postgresql.org/docs/current/sql-dropextension.html
+    /// ```
+    DropExtension {
+        names: Vec<Ident>,
+        if_exists: bool,
+        /// `CASCADE` or `RESTRICT`
+        cascade_or_restrict: Option<ReferentialAction>,
+    },
+    /// ```sql
     /// FETCH
     /// ```
     /// Retrieve rows from a query using a cursor
@@ -2961,6 +2975,7 @@ pub enum Statement {
     StartTransaction {
         modes: Vec<TransactionMode>,
         begin: bool,
+        transaction: Option<BeginTransactionKind>,
         /// Only for SQLite
         modifier: Option<TransactionModifier>,
     },
@@ -3250,6 +3265,9 @@ pub enum Statement {
         ///
         /// [SQLite](https://sqlite.org/lang_explain.html)
         query_plan: bool,
+        /// `EXPLAIN ESTIMATE`
+        /// [Clickhouse](https://clickhouse.com/docs/en/sql-reference/statements/explain#explain-estimate)
+        estimate: bool,
         /// A SQL query that specifies what to explain
         statement: Box<Statement>,
         /// Optional output format of explain
@@ -3482,6 +3500,7 @@ impl fmt::Display for Statement {
                 verbose,
                 analyze,
                 query_plan,
+                estimate,
                 statement,
                 format,
                 options,
@@ -3493,6 +3512,9 @@ impl fmt::Display for Statement {
                 }
                 if *analyze {
                     write!(f, "ANALYZE ")?;
+                }
+                if *estimate {
+                    write!(f, "ESTIMATE ")?;
                 }
 
                 if *verbose {
@@ -3655,8 +3677,13 @@ impl fmt::Display for Statement {
                 cache_metadata,
                 noscan,
                 compute_statistics,
+                has_table_keyword,
             } => {
-                write!(f, "ANALYZE TABLE {table_name}")?;
+                write!(
+                    f,
+                    "ANALYZE{}{table_name}",
+                    if *has_table_keyword { " TABLE " } else { " " }
+                )?;
                 if let Some(ref parts) = partitions {
                     if !parts.is_empty() {
                         write!(f, " PARTITION ({})", display_comma_separated(parts))?;
@@ -3748,10 +3775,13 @@ impl fmt::Display for Statement {
                     write!(f, "{or} ")?;
                 }
                 write!(f, "{table}")?;
+                if let Some(UpdateTableFromKind::BeforeSet(from)) = from {
+                    write!(f, " FROM {from}")?;
+                }
                 if !assignments.is_empty() {
                     write!(f, " SET {}", display_comma_separated(assignments))?;
                 }
-                if let Some(from) = from {
+                if let Some(UpdateTableFromKind::AfterSet(from)) = from {
                     write!(f, " FROM {from}")?;
                 }
                 if let Some(selection) = selection {
@@ -4027,6 +4057,21 @@ impl fmt::Display for Statement {
                     }
                 }
 
+                Ok(())
+            }
+            Statement::DropExtension {
+                names,
+                if_exists,
+                cascade_or_restrict,
+            } => {
+                write!(f, "DROP EXTENSION")?;
+                if *if_exists {
+                    write!(f, " IF EXISTS")?;
+                }
+                write!(f, " {}", display_comma_separated(names))?;
+                if let Some(cascade_or_restrict) = cascade_or_restrict {
+                    write!(f, " {cascade_or_restrict}")?;
+                }
                 Ok(())
             }
             Statement::CreateRole {
@@ -4536,16 +4581,20 @@ impl fmt::Display for Statement {
             Statement::StartTransaction {
                 modes,
                 begin: syntax_begin,
+                transaction,
                 modifier,
             } => {
                 if *syntax_begin {
                     if let Some(modifier) = *modifier {
-                        write!(f, "BEGIN {} TRANSACTION", modifier)?;
+                        write!(f, "BEGIN {}", modifier)?;
                     } else {
-                        write!(f, "BEGIN TRANSACTION")?;
+                        write!(f, "BEGIN")?;
                     }
                 } else {
-                    write!(f, "START TRANSACTION")?;
+                    write!(f, "START")?;
+                }
+                if let Some(transaction) = transaction {
+                    write!(f, " {transaction}")?;
                 }
                 if !modes.is_empty() {
                     write!(f, " {}", display_comma_separated(modes))?;
@@ -5040,6 +5089,24 @@ pub enum TruncateCascadeOption {
     Restrict,
 }
 
+/// Transaction started with [ TRANSACTION | WORK ]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum BeginTransactionKind {
+    Transaction,
+    Work,
+}
+
+impl Display for BeginTransactionKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BeginTransactionKind::Transaction => write!(f, "TRANSACTION"),
+            BeginTransactionKind::Work => write!(f, "WORK"),
+        }
+    }
+}
+
 /// Can use to describe options in  create sequence or table column type identity
 /// [ MINVALUE minvalue | NO MINVALUE ] [ MAXVALUE maxvalue | NO MAXVALUE ]
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -5515,6 +5582,15 @@ impl fmt::Display for CloseCursor {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct Function {
     pub name: ObjectName,
+    /// Flags whether this function call uses the [ODBC syntax].
+    ///
+    /// Example:
+    /// ```sql
+    /// SELECT {fn CONCAT('foo', 'bar')}
+    /// ```
+    ///
+    /// [ODBC syntax]: https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/scalar-function-calls?view=sql-server-2017
+    pub uses_odbc_syntax: bool,
     /// The parameters to the function, including any options specified within the
     /// delimiting parentheses.
     ///
@@ -5553,6 +5629,10 @@ pub struct Function {
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.uses_odbc_syntax {
+            write!(f, "{{fn ")?;
+        }
+
         write!(f, "{}{}{}", self.name, self.parameters, self.args)?;
 
         if !self.within_group.is_empty() {
@@ -5573,6 +5653,10 @@ impl fmt::Display for Function {
 
         if let Some(o) = &self.over {
             write!(f, " OVER {o}")?;
+        }
+
+        if self.uses_odbc_syntax {
+            write!(f, "}}")?;
         }
 
         Ok(())

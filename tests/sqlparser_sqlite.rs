@@ -419,6 +419,7 @@ fn parse_window_function_with_filter() {
             select.projection,
             vec![SelectItem::UnnamedExpr(Expr::Function(Function {
                 name: ObjectName(vec![Ident::new(func_name)]),
+                uses_odbc_syntax: false,
                 parameters: FunctionArguments::None,
                 args: FunctionArguments::List(FunctionArgumentList {
                     duplicate_treatment: None,
@@ -478,16 +479,7 @@ fn parse_update_tuple_row_values() {
             }],
             selection: None,
             table: TableWithJoins {
-                relation: TableFactor::Table {
-                    name: ObjectName(vec![Ident::new("x")]),
-                    alias: None,
-                    args: None,
-                    with_hints: vec![],
-                    version: None,
-                    partitions: vec![],
-                    with_ordinality: false,
-                    json_path: None,
-                },
+                relation: table_from_name(ObjectName(vec![Ident::new("x")])),
                 joins: vec![],
             },
             from: None,
@@ -527,9 +519,9 @@ fn parse_start_transaction_with_modifier() {
     sqlite_and_generic().verified_stmt("BEGIN DEFERRED TRANSACTION");
     sqlite_and_generic().verified_stmt("BEGIN IMMEDIATE TRANSACTION");
     sqlite_and_generic().verified_stmt("BEGIN EXCLUSIVE TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN DEFERRED", "BEGIN DEFERRED TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN IMMEDIATE", "BEGIN IMMEDIATE TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN EXCLUSIVE", "BEGIN EXCLUSIVE TRANSACTION");
+    sqlite_and_generic().verified_stmt("BEGIN DEFERRED");
+    sqlite_and_generic().verified_stmt("BEGIN IMMEDIATE");
+    sqlite_and_generic().verified_stmt("BEGIN EXCLUSIVE");
 
     let unsupported_dialects = TestedDialects::new(
         all_dialects()
@@ -566,6 +558,16 @@ fn test_dollar_identifier_as_placeholder() {
             assert_eq!(op, BinaryOperator::Eq);
             assert_eq!(left, Box::new(Expr::Identifier(Ident::new("id"))));
             assert_eq!(right, Box::new(Expr::Value(Placeholder("$id".to_string()))));
+        }
+        _ => unreachable!(),
+    }
+
+    // $$ is a valid placeholder in SQLite
+    match sqlite().verified_expr("id = $$") {
+        Expr::BinaryOp { op, left, right } => {
+            assert_eq!(op, BinaryOperator::Eq);
+            assert_eq!(left, Box::new(Expr::Identifier(Ident::new("id"))));
+            assert_eq!(right, Box::new(Expr::Value(Placeholder("$$".to_string()))));
         }
         _ => unreachable!(),
     }
