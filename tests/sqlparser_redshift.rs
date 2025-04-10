@@ -39,7 +39,7 @@ fn test_square_brackets_over_db_schema_table_name() {
     assert_eq!(
         select.from[0],
         TableWithJoins {
-            relation: table_from_name(ObjectName(vec![
+            relation: table_from_name(ObjectName::from(vec![
                 Ident {
                     value: "test_schema".to_string(),
                     quote_style: Some('['),
@@ -81,7 +81,7 @@ fn test_double_quotes_over_db_schema_table_name() {
     assert_eq!(
         select.from[0],
         TableWithJoins {
-            relation: table_from_name(ObjectName(vec![
+            relation: table_from_name(ObjectName::from(vec![
                 Ident {
                     value: "test_schema".to_string(),
                     quote_style: Some('"'),
@@ -114,7 +114,10 @@ fn parse_delimited_identifiers() {
             version,
             ..
         } => {
-            assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
+            assert_eq!(
+                ObjectName::from(vec![Ident::with_quote('"', "a table")]),
+                name
+            );
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
             assert!(args.is_none());
             assert!(with_hints.is_empty());
@@ -133,7 +136,7 @@ fn parse_delimited_identifiers() {
     );
     assert_eq!(
         &Expr::Function(Function {
-            name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            name: ObjectName::from(vec![Ident::with_quote('"', "myfun")]),
             uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
@@ -205,7 +208,7 @@ fn test_redshift_json_path() {
             path: JsonPath {
                 path: vec![
                     JsonPathElem::Bracket {
-                        key: Expr::Value(number("0"))
+                        key: Expr::value(number("0"))
                     },
                     JsonPathElem::Dot {
                         key: "o_orderkey".to_string(),
@@ -228,10 +231,12 @@ fn test_redshift_json_path() {
             path: JsonPath {
                 path: vec![
                     JsonPathElem::Bracket {
-                        key: Expr::Value(number("0"))
+                        key: Expr::value(number("0"))
                     },
                     JsonPathElem::Bracket {
-                        key: Expr::Value(Value::SingleQuotedString("id".to_owned()))
+                        key: Expr::Value(
+                            (Value::SingleQuotedString("id".to_owned())).with_empty_span()
+                        )
                     }
                 ]
             }
@@ -252,10 +257,12 @@ fn test_redshift_json_path() {
             path: JsonPath {
                 path: vec![
                     JsonPathElem::Bracket {
-                        key: Expr::Value(number("0"))
+                        key: Expr::value(number("0"))
                     },
                     JsonPathElem::Bracket {
-                        key: Expr::Value(Value::SingleQuotedString("id".to_owned()))
+                        key: Expr::Value(
+                            (Value::SingleQuotedString("id".to_owned())).with_empty_span()
+                        )
                     }
                 ]
             }
@@ -276,7 +283,7 @@ fn test_redshift_json_path() {
             path: JsonPath {
                 path: vec![
                     JsonPathElem::Bracket {
-                        key: Expr::Value(number("0"))
+                        key: Expr::value(number("0"))
                     },
                     JsonPathElem::Dot {
                         key: "id".to_string(),
@@ -297,13 +304,13 @@ fn test_parse_json_path_from() {
         TableFactor::Table {
             name, json_path, ..
         } => {
-            assert_eq!(name, &ObjectName(vec![Ident::new("src")]));
+            assert_eq!(name, &ObjectName::from(vec![Ident::new("src")]));
             assert_eq!(
                 json_path,
                 &Some(JsonPath {
                     path: vec![
                         JsonPathElem::Bracket {
-                            key: Expr::Value(number("0"))
+                            key: Expr::value(number("0"))
                         },
                         JsonPathElem::Dot {
                             key: "a".to_string(),
@@ -321,20 +328,22 @@ fn test_parse_json_path_from() {
         TableFactor::Table {
             name, json_path, ..
         } => {
-            assert_eq!(name, &ObjectName(vec![Ident::new("src")]));
+            assert_eq!(name, &ObjectName::from(vec![Ident::new("src")]));
             assert_eq!(
                 json_path,
                 &Some(JsonPath {
                     path: vec![
                         JsonPathElem::Bracket {
-                            key: Expr::Value(number("0"))
+                            key: Expr::value(number("0"))
                         },
                         JsonPathElem::Dot {
                             key: "a".to_string(),
                             quoted: false
                         },
                         JsonPathElem::Bracket {
-                            key: Expr::Value(Value::Number("1".parse().unwrap(), false))
+                            key: Expr::Value(
+                                (Value::Number("1".parse().unwrap(), false)).with_empty_span()
+                            )
                         },
                         JsonPathElem::Dot {
                             key: "b".to_string(),
@@ -354,7 +363,7 @@ fn test_parse_json_path_from() {
         } => {
             assert_eq!(
                 name,
-                &ObjectName(vec![Ident::new("src"), Ident::new("a"), Ident::new("b")])
+                &ObjectName::from(vec![Ident::new("src"), Ident::new("a"), Ident::new("b")])
             );
             assert_eq!(json_path, &None);
         }
@@ -381,4 +390,15 @@ fn test_parse_nested_quoted_identifier() {
     assert!(redshift()
         .parse_sql_statements(r#"SELECT 1 AS ["1]"#)
         .is_err());
+}
+
+#[test]
+fn parse_extract_single_quotes() {
+    let sql = "SELECT EXTRACT('month' FROM my_timestamp) FROM my_table";
+    redshift().verified_stmt(sql);
+}
+
+#[test]
+fn parse_string_literal_backslash_escape() {
+    redshift().one_statement_parses_to(r#"SELECT 'l\'auto'"#, "SELECT 'l''auto'");
 }

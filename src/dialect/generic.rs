@@ -48,6 +48,10 @@ impl Dialect for GenericDialect {
         true
     }
 
+    fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+
     fn supports_connect_by(&self) -> bool {
         true
     }
@@ -129,6 +133,34 @@ impl Dialect for GenericDialect {
     }
 
     fn supports_empty_projections(&self) -> bool {
+        true
+    }
+
+    fn supports_nested_comments(&self) -> bool {
+        true
+    }
+
+    fn supports_user_host_grantee(&self) -> bool {
+        true
+    }
+
+    fn supports_string_escape_constant(&self) -> bool {
+        true
+    }
+
+    fn supports_array_typedef_with_brackets(&self) -> bool {
+        true
+    }
+
+    fn supports_match_against(&self) -> bool {
+        true
+    }
+
+    fn supports_set_names(&self) -> bool {
+        true
+    }
+
+    fn supports_comma_separated_set_assignments(&self) -> bool {
         true
     }
 }

@@ -47,7 +47,9 @@ fn test_databricks_identifiers() {
         databricks()
             .verified_only_select(r#"SELECT "Ä""#)
             .projection[0],
-        SelectItem::UnnamedExpr(Expr::Value(Value::DoubleQuotedString("Ä".to_owned())))
+        SelectItem::UnnamedExpr(Expr::Value(
+            (Value::DoubleQuotedString("Ä".to_owned())).with_empty_span()
+        ))
     );
 }
 
@@ -62,9 +64,9 @@ fn test_databricks_exists() {
                 call(
                     "array",
                     [
-                        Expr::Value(number("1")),
-                        Expr::Value(number("2")),
-                        Expr::Value(number("3"))
+                        Expr::value(number("1")),
+                        Expr::value(number("2")),
+                        Expr::value(number("3"))
                     ]
                 ),
                 Expr::Lambda(LambdaFunction {
@@ -99,8 +101,8 @@ fn test_databricks_lambdas() {
                 call(
                     "array",
                     [
-                        Expr::Value(Value::SingleQuotedString("Hello".to_owned())),
-                        Expr::Value(Value::SingleQuotedString("World".to_owned()))
+                        Expr::value(Value::SingleQuotedString("Hello".to_owned())),
+                        Expr::value(Value::SingleQuotedString("World".to_owned()))
                     ]
                 ),
                 Expr::Lambda(LambdaFunction {
@@ -108,31 +110,33 @@ fn test_databricks_lambdas() {
                     body: Box::new(Expr::Case {
                         operand: None,
                         conditions: vec![
-                            Expr::BinaryOp {
-                                left: Box::new(Expr::Identifier(Ident::new("p1"))),
-                                op: BinaryOperator::Eq,
-                                right: Box::new(Expr::Identifier(Ident::new("p2")))
+                            CaseWhen {
+                                condition: Expr::BinaryOp {
+                                    left: Box::new(Expr::Identifier(Ident::new("p1"))),
+                                    op: BinaryOperator::Eq,
+                                    right: Box::new(Expr::Identifier(Ident::new("p2")))
+                                },
+                                result: Expr::value(number("0"))
                             },
-                            Expr::BinaryOp {
-                                left: Box::new(call(
-                                    "reverse",
-                                    [Expr::Identifier(Ident::new("p1"))]
-                                )),
-                                op: BinaryOperator::Lt,
-                                right: Box::new(call(
-                                    "reverse",
-                                    [Expr::Identifier(Ident::new("p2"))]
-                                ))
-                            }
+                            CaseWhen {
+                                condition: Expr::BinaryOp {
+                                    left: Box::new(call(
+                                        "reverse",
+                                        [Expr::Identifier(Ident::new("p1"))]
+                                    )),
+                                    op: BinaryOperator::Lt,
+                                    right: Box::new(call(
+                                        "reverse",
+                                        [Expr::Identifier(Ident::new("p2"))]
+                                    )),
+                                },
+                                result: Expr::UnaryOp {
+                                    op: UnaryOperator::Minus,
+                                    expr: Box::new(Expr::value(number("1")))
+                                }
+                            },
                         ],
-                        results: vec![
-                            Expr::Value(number("0")),
-                            Expr::UnaryOp {
-                                op: UnaryOperator::Minus,
-                                expr: Box::new(Expr::Value(number("1")))
-                            }
-                        ],
-                        else_result: Some(Box::new(Expr::Value(number("1"))))
+                        else_result: Some(Box::new(Expr::value(number("1"))))
                     })
                 })
             ]
@@ -152,12 +156,12 @@ fn test_values_clause() {
         explicit_row: false,
         rows: vec![
             vec![
-                Expr::Value(Value::DoubleQuotedString("one".to_owned())),
-                Expr::Value(number("1")),
+                Expr::Value((Value::DoubleQuotedString("one".to_owned())).with_empty_span()),
+                Expr::value(number("1")),
             ],
             vec![
-                Expr::Value(Value::SingleQuotedString("two".to_owned())),
-                Expr::Value(number("2")),
+                Expr::Value((Value::SingleQuotedString("two".to_owned())).with_empty_span()),
+                Expr::value(number("2")),
             ],
         ],
     };
@@ -185,7 +189,9 @@ fn test_values_clause() {
         "SELECT * FROM values",
     ));
     assert_eq!(
-        Some(&table_from_name(ObjectName(vec![Ident::new("values")]))),
+        Some(&table_from_name(ObjectName::from(vec![Ident::new(
+            "values"
+        )]))),
         query
             .body
             .as_select()
@@ -205,7 +211,7 @@ fn parse_use() {
         // Test single identifier without quotes
         assert_eq!(
             databricks().verified_stmt(&format!("USE {}", object_name)),
-            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+            Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
         );
@@ -213,7 +219,7 @@ fn parse_use() {
             // Test single identifier with different type of quotes
             assert_eq!(
                 databricks().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
-                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
                 )])))
@@ -225,21 +231,21 @@ fn parse_use() {
         // Test single identifier with keyword and different type of quotes
         assert_eq!(
             databricks().verified_stmt(&format!("USE CATALOG {0}my_catalog{0}", quote)),
-            Statement::Use(Use::Catalog(ObjectName(vec![Ident::with_quote(
+            Statement::Use(Use::Catalog(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_catalog".to_string(),
             )])))
         );
         assert_eq!(
             databricks().verified_stmt(&format!("USE DATABASE {0}my_database{0}", quote)),
-            Statement::Use(Use::Database(ObjectName(vec![Ident::with_quote(
+            Statement::Use(Use::Database(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_database".to_string(),
             )])))
         );
         assert_eq!(
             databricks().verified_stmt(&format!("USE SCHEMA {0}my_schema{0}", quote)),
-            Statement::Use(Use::Schema(ObjectName(vec![Ident::with_quote(
+            Statement::Use(Use::Schema(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_schema".to_string(),
             )])))
@@ -249,15 +255,19 @@ fn parse_use() {
     // Test single identifier with keyword and no quotes
     assert_eq!(
         databricks().verified_stmt("USE CATALOG my_catalog"),
-        Statement::Use(Use::Catalog(ObjectName(vec![Ident::new("my_catalog")])))
+        Statement::Use(Use::Catalog(ObjectName::from(vec![Ident::new(
+            "my_catalog"
+        )])))
     );
     assert_eq!(
         databricks().verified_stmt("USE DATABASE my_schema"),
-        Statement::Use(Use::Database(ObjectName(vec![Ident::new("my_schema")])))
+        Statement::Use(Use::Database(ObjectName::from(vec![Ident::new(
+            "my_schema"
+        )])))
     );
     assert_eq!(
         databricks().verified_stmt("USE SCHEMA my_schema"),
-        Statement::Use(Use::Schema(ObjectName(vec![Ident::new("my_schema")])))
+        Statement::Use(Use::Schema(ObjectName::from(vec![Ident::new("my_schema")])))
     );
 
     // Test invalid syntax - missing identifier
@@ -278,8 +288,8 @@ fn parse_databricks_struct_function() {
             .projection[0],
         SelectItem::UnnamedExpr(Expr::Struct {
             values: vec![
-                Expr::Value(number("1")),
-                Expr::Value(Value::SingleQuotedString("foo".to_string()))
+                Expr::value(number("1")),
+                Expr::Value((Value::SingleQuotedString("foo".to_string())).with_empty_span())
             ],
             fields: vec![]
         })
@@ -291,16 +301,59 @@ fn parse_databricks_struct_function() {
         SelectItem::UnnamedExpr(Expr::Struct {
             values: vec![
                 Expr::Named {
-                    expr: Expr::Value(number("1")).into(),
+                    expr: Expr::value(number("1")).into(),
                     name: Ident::new("one")
                 },
                 Expr::Named {
-                    expr: Expr::Value(Value::SingleQuotedString("foo".to_string())).into(),
+                    expr: Expr::Value(
+                        (Value::SingleQuotedString("foo".to_string())).with_empty_span()
+                    )
+                    .into(),
                     name: Ident::new("foo")
                 },
-                Expr::Value(Value::Boolean(false))
+                Expr::Value((Value::Boolean(false)).with_empty_span())
             ],
             fields: vec![]
         })
     );
+}
+
+#[test]
+fn data_type_timestamp_ntz() {
+    // Literal
+    assert_eq!(
+        databricks().verified_expr("TIMESTAMP_NTZ '2025-03-29T18:52:00'"),
+        Expr::TypedString {
+            data_type: DataType::TimestampNtz,
+            value: Value::SingleQuotedString("2025-03-29T18:52:00".to_owned())
+        }
+    );
+
+    // Cast
+    assert_eq!(
+        databricks().verified_expr("(created_at)::TIMESTAMP_NTZ"),
+        Expr::Cast {
+            kind: CastKind::DoubleColon,
+            expr: Box::new(Expr::Nested(Box::new(Expr::Identifier(
+                "created_at".into()
+            )))),
+            data_type: DataType::TimestampNtz,
+            format: None
+        }
+    );
+
+    // Column definition
+    match databricks().verified_stmt("CREATE TABLE foo (x TIMESTAMP_NTZ)") {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(
+                columns,
+                vec![ColumnDef {
+                    name: "x".into(),
+                    data_type: DataType::TimestampNtz,
+                    options: vec![],
+                }]
+            );
+        }
+        s => panic!("Unexpected statement: {:?}", s),
+    }
 }

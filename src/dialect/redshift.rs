@@ -109,4 +109,24 @@ impl Dialect for RedshiftSqlDialect {
     fn supports_partiql(&self) -> bool {
         true
     }
+
+    fn supports_string_escape_constant(&self) -> bool {
+        true
+    }
+
+    fn supports_geometric_types(&self) -> bool {
+        true
+    }
+
+    fn supports_array_typedef_with_brackets(&self) -> bool {
+        true
+    }
+
+    fn allow_extract_single_quotes(&self) -> bool {
+        true
+    }
+
+    fn supports_string_literal_backslash_escape(&self) -> bool {
+        true
+    }
 }

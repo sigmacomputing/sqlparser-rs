@@ -22,9 +22,8 @@
 
 use sqlparser::ast::{
     ClusteredBy, CommentDef, CreateFunction, CreateFunctionBody, CreateFunctionUsing, CreateTable,
-    Expr, Function, FunctionArgumentList, FunctionArguments, Ident, ObjectName,
-    OneOrManyWithParens, OrderByExpr, SelectItem, Statement, TableFactor, UnaryOperator, Use,
-    Value,
+    Expr, Function, FunctionArgumentList, FunctionArguments, Ident, ObjectName, OrderByExpr,
+    OrderByOptions, SelectItem, Set, Statement, TableFactor, UnaryOperator, Use, Value,
 };
 use sqlparser::dialect::{GenericDialect, HiveDialect, MsSqlDialect};
 use sqlparser::parser::ParserError;
@@ -92,7 +91,7 @@ fn parse_msck() {
 }
 
 #[test]
-fn parse_set() {
+fn parse_set_hivevar() {
     let set = "SET HIVEVAR:name = a, b, c_d";
     hive().verified_stmt(set);
 }
@@ -171,14 +170,18 @@ fn create_table_with_clustered_by() {
                     sorted_by: Some(vec![
                         OrderByExpr {
                             expr: Expr::Identifier(Ident::new("a")),
-                            asc: Some(true),
-                            nulls_first: None,
+                            options: OrderByOptions {
+                                asc: Some(true),
+                                nulls_first: None,
+                            },
                             with_fill: None,
                         },
                         OrderByExpr {
                             expr: Expr::Identifier(Ident::new("b")),
-                            asc: Some(false),
-                            nulls_first: None,
+                            options: OrderByOptions {
+                                asc: Some(false),
+                                nulls_first: None,
+                            },
                             with_fill: None,
                         },
                     ]),
@@ -365,20 +368,20 @@ fn from_cte() {
 fn set_statement_with_minus() {
     assert_eq!(
         hive().verified_stmt("SET hive.tez.java.opts = -Xmx4g"),
-        Statement::SetVariable {
-            local: false,
+        Statement::Set(Set::SingleAssignment {
+            scope: None,
             hivevar: false,
-            variables: OneOrManyWithParens::One(ObjectName(vec![
+            variable: ObjectName::from(vec![
                 Ident::new("hive"),
                 Ident::new("tez"),
                 Ident::new("java"),
                 Ident::new("opts")
-            ])),
-            value: vec![Expr::UnaryOp {
+            ]),
+            values: vec![Expr::UnaryOp {
                 op: UnaryOperator::Minus,
                 expr: Box::new(Expr::Identifier(Ident::new("Xmx4g")))
             }],
-        }
+        })
     );
 
     assert_eq!(
@@ -405,7 +408,8 @@ fn parse_create_function() {
             assert_eq!(
                 function_body,
                 Some(CreateFunctionBody::AsBeforeOptions(Expr::Value(
-                    Value::SingleQuotedString("org.random.class.Name".to_string())
+                    (Value::SingleQuotedString("org.random.class.Name".to_string()))
+                        .with_empty_span()
                 )))
             );
             assert_eq!(
@@ -460,8 +464,12 @@ fn parse_delimited_identifiers() {
             partitions: _,
             json_path: _,
             sample: _,
+            index_hints: _,
         } => {
-            assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
+            assert_eq!(
+                ObjectName::from(vec![Ident::with_quote('"', "a table")]),
+                name
+            );
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
             assert!(args.is_none());
             assert!(with_hints.is_empty());
@@ -480,7 +488,7 @@ fn parse_delimited_identifiers() {
     );
     assert_eq!(
         &Expr::Function(Function {
-            name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            name: ObjectName::from(vec![Ident::with_quote('"', "myfun")]),
             uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
@@ -516,7 +524,7 @@ fn parse_use() {
         // Test single identifier without quotes
         assert_eq!(
             hive().verified_stmt(&format!("USE {}", object_name)),
-            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+            Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
         );
@@ -524,7 +532,7 @@ fn parse_use() {
             // Test single identifier with different type of quotes
             assert_eq!(
                 hive().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
-                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
                 )])))

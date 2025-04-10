@@ -53,7 +53,7 @@ println!("AST: {:?}", ast);
 This outputs
 
 ```rust
-AST: [Query(Query { ctes: [], body: Select(Select { distinct: false, projection: [UnnamedExpr(Identifier("a")), UnnamedExpr(Identifier("b")), UnnamedExpr(Value(Long(123))), UnnamedExpr(Function(Function { name: ObjectName(["myfunc"]), args: [Identifier("b")], filter: None, over: None, distinct: false }))], from: [TableWithJoins { relation: Table { name: ObjectName(["table_1"]), alias: None, args: [], with_hints: [] }, joins: [] }], selection: Some(BinaryOp { left: BinaryOp { left: Identifier("a"), op: Gt, right: Identifier("b") }, op: And, right: BinaryOp { left: Identifier("b"), op: Lt, right: Value(Long(100)) } }), group_by: [], having: None }), order_by: [OrderByExpr { expr: Identifier("a"), asc: Some(false) }, OrderByExpr { expr: Identifier("b"), asc: None }], limit: None, offset: None, fetch: None })]
+AST: [Query(Query { ctes: [], body: Select(Select { distinct: false, projection: [UnnamedExpr(Identifier("a")), UnnamedExpr(Identifier("b")), UnnamedExpr(Value(Long(123))), UnnamedExpr(Function(Function { name:ObjectName([Identifier(Ident { value: "myfunc", quote_style: None })]), args: [Identifier("b")], filter: None, over: None, distinct: false }))], from: [TableWithJoins { relation: Table { name: ObjectName([Identifier(Ident { value: "table_1", quote_style: None })]), alias: None, args: [], with_hints: [] }, joins: [] }], selection: Some(BinaryOp { left: BinaryOp { left: Identifier("a"), op: Gt, right: Identifier("b") }, op: And, right: BinaryOp { left: Identifier("b"), op: Lt, right: Value(Long(100)) } }), group_by: [], having: None }), order_by: [OrderByExpr { expr: Identifier("a"), asc: Some(false) }, OrderByExpr { expr: Identifier("b"), asc: None }], limit: None, offset: None, fetch: None })]
 ```
 
 
@@ -156,7 +156,8 @@ $ cargo run --features json_example --example cli FILENAME.sql [--dialectname]
 ## Users
 
 This parser is currently being used by the [DataFusion] query engine, [LocustDB],
-[Ballista], [GlueSQL], [Opteryx], [Polars], [PRQL], [Qrlew], [JumpWire], and [ParadeDB].
+[Ballista], [GlueSQL], [Opteryx], [Polars], [PRQL], [Qrlew], [JumpWire], [ParadeDB], [CipherStash Proxy],
+and [GreptimeDB].
 
 If your project is using sqlparser-rs feel free to make a PR to add it
 to this list.
@@ -275,3 +276,5 @@ licensed as above, without any additional terms or conditions.
 [sql-standard]: https://en.wikipedia.org/wiki/ISO/IEC_9075
 [`Dialect`]: https://docs.rs/sqlparser/latest/sqlparser/dialect/trait.Dialect.html
 [`GenericDialect`]: https://docs.rs/sqlparser/latest/sqlparser/dialect/struct.GenericDialect.html
+[CipherStash Proxy]: https://github.com/cipherstash/proxy
+[GreptimeDB]: https://github.com/GreptimeTeam/greptimedb

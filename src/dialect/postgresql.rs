@@ -28,7 +28,6 @@
 // limitations under the License.
 use log::debug;
 
-use crate::ast::{ObjectName, Statement, UserDefinedTypeRepresentation};
 use crate::dialect::{Dialect, Precedence};
 use crate::keywords::Keyword;
 use crate::parser::{Parser, ParserError};
@@ -38,6 +37,7 @@ use crate::tokenizer::Token;
 #[derive(Debug)]
 pub struct PostgreSqlDialect {}
 
+const PERIOD_PREC: u8 = 200;
 const DOUBLE_COLON_PREC: u8 = 140;
 const BRACKET_PREC: u8 = 130;
 const COLLATE_PREC: u8 = 120;
@@ -135,15 +135,6 @@ impl Dialect for PostgreSqlDialect {
         }
     }
 
-    fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
-        if parser.parse_keyword(Keyword::CREATE) {
-            parser.prev_token(); // unconsume the CREATE in case we don't end up parsing anything
-            parse_create(parser)
-        } else {
-            None
-        }
-    }
-
     fn supports_filter_during_aggregation(&self) -> bool {
         true
     }
@@ -154,6 +145,7 @@ impl Dialect for PostgreSqlDialect {
 
     fn prec_value(&self, prec: Precedence) -> u8 {
         match prec {
+            Precedence::Period => PERIOD_PREC,
             Precedence::DoubleColon => DOUBLE_COLON_PREC,
             Precedence::AtTz => AT_TZ_PREC,
             Precedence::MulDivModOp => MUL_DIV_MOD_OP_PREC,
@@ -241,38 +233,29 @@ impl Dialect for PostgreSqlDialect {
     fn supports_empty_projections(&self) -> bool {
         true
     }
-}
 
-pub fn parse_create(parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
-    let name = parser.maybe_parse(|parser| -> Result<ObjectName, ParserError> {
-        parser.expect_keyword_is(Keyword::CREATE)?;
-        parser.expect_keyword_is(Keyword::TYPE)?;
-        let name = parser.parse_object_name(false)?;
-        parser.expect_keyword_is(Keyword::AS)?;
-        parser.expect_keyword_is(Keyword::ENUM)?;
-        Ok(name)
-    });
-
-    match name {
-        Ok(name) => name.map(|name| parse_create_type_as_enum(parser, name)),
-        Err(e) => Some(Err(e)),
-    }
-}
-
-// https://www.postgresql.org/docs/current/sql-createtype.html
-pub fn parse_create_type_as_enum(
-    parser: &mut Parser,
-    name: ObjectName,
-) -> Result<Statement, ParserError> {
-    if !parser.consume_token(&Token::LParen) {
-        return parser.expected("'(' after CREATE TYPE AS ENUM", parser.peek_token());
+    fn supports_nested_comments(&self) -> bool {
+        true
     }
 
-    let labels = parser.parse_comma_separated0(|p| p.parse_identifier(), Token::RParen)?;
-    parser.expect_token(&Token::RParen)?;
+    fn supports_string_escape_constant(&self) -> bool {
+        true
+    }
 
-    Ok(Statement::CreateType {
-        name,
-        representation: UserDefinedTypeRepresentation::Enum { labels },
-    })
+    fn supports_numeric_literal_underscores(&self) -> bool {
+        true
+    }
+
+    /// See: <https://www.postgresql.org/docs/current/arrays.html#ARRAYS-DECLARATION>
+    fn supports_array_typedef_with_brackets(&self) -> bool {
+        true
+    }
+
+    fn supports_geometric_types(&self) -> bool {
+        true
+    }
+
+    fn supports_set_names(&self) -> bool {
+        true
+    }
 }

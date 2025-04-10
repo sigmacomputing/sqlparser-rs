@@ -55,14 +55,14 @@ fn parse_map_access_expr() {
                         "indexOf",
                         [
                             Expr::Identifier(Ident::new("string_names")),
-                            Expr::Value(Value::SingleQuotedString("endpoint".to_string()))
+                            Expr::value(Value::SingleQuotedString("endpoint".to_string()))
                         ]
                     ),
                 })],
             })],
             into: None,
             from: vec![TableWithJoins {
-                relation: table_from_name(ObjectName(vec![Ident::new("foos")])),
+                relation: table_from_name(ObjectName::from(vec![Ident::new("foos")])),
                 joins: vec![],
             }],
             lateral_views: vec![],
@@ -71,7 +71,7 @@ fn parse_map_access_expr() {
                 left: Box::new(BinaryOp {
                     left: Box::new(Identifier(Ident::new("id"))),
                     op: BinaryOperator::Eq,
-                    right: Box::new(Expr::Value(Value::SingleQuotedString("test".to_string()))),
+                    right: Box::new(Expr::value(Value::SingleQuotedString("test".to_string()))),
                 }),
                 op: BinaryOperator::And,
                 right: Box::new(BinaryOp {
@@ -82,13 +82,13 @@ fn parse_map_access_expr() {
                                 "indexOf",
                                 [
                                     Expr::Identifier(Ident::new("string_name")),
-                                    Expr::Value(Value::SingleQuotedString("app".to_string()))
+                                    Expr::value(Value::SingleQuotedString("app".to_string()))
                                 ]
                             ),
                         })],
                     }),
                     op: BinaryOperator::NotEq,
-                    right: Box::new(Expr::Value(Value::SingleQuotedString("foo".to_string()))),
+                    right: Box::new(Expr::value(Value::SingleQuotedString("foo".to_string()))),
                 }),
             }),
             group_by: GroupByExpr::Expressions(vec![], vec![]),
@@ -101,6 +101,7 @@ fn parse_map_access_expr() {
             qualify: None,
             value_table_mode: None,
             connect_by: None,
+            flavor: SelectFlavor::Standard,
         },
         select
     );
@@ -113,8 +114,8 @@ fn parse_array_expr() {
     assert_eq!(
         &Expr::Array(Array {
             elem: vec![
-                Expr::Value(Value::SingleQuotedString("1".to_string())),
-                Expr::Value(Value::SingleQuotedString("2".to_string())),
+                Expr::value(Value::SingleQuotedString("1".to_string())),
+                Expr::value(Value::SingleQuotedString("2".to_string())),
             ],
             named: false,
         }),
@@ -166,7 +167,10 @@ fn parse_delimited_identifiers() {
             version,
             ..
         } => {
-            assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
+            assert_eq!(
+                ObjectName::from(vec![Ident::with_quote('"', "a table")]),
+                name
+            );
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
             assert!(args.is_none());
             assert!(with_hints.is_empty());
@@ -185,7 +189,7 @@ fn parse_delimited_identifiers() {
     );
     assert_eq!(
         &Expr::Function(Function {
-            name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            name: ObjectName::from(vec![Ident::with_quote('"', "myfun")]),
             uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
@@ -220,6 +224,12 @@ fn parse_create_table() {
     clickhouse().verified_stmt(
         r#"CREATE TABLE "x" ("a" "int") ENGINE=MergeTree ORDER BY "x" AS SELECT * FROM "t" WHERE true"#,
     );
+}
+
+#[test]
+fn parse_insert_into_function() {
+    clickhouse().verified_stmt(r#"INSERT INTO TABLE FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
+    clickhouse().verified_stmt(r#"INSERT INTO FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
 }
 
 #[test]
@@ -296,7 +306,7 @@ fn parse_alter_table_add_projection() {
         Statement::AlterTable {
             name, operations, ..
         } => {
-            assert_eq!(name, ObjectName(vec!["t0".into()]));
+            assert_eq!(name, ObjectName::from(vec!["t0".into()]));
             assert_eq!(1, operations.len());
             assert_eq!(
                 operations[0],
@@ -313,12 +323,14 @@ fn parse_alter_table_add_projection() {
                             vec![]
                         )),
                         order_by: Some(OrderBy {
-                            exprs: vec![OrderByExpr {
+                            kind: OrderByKind::Expressions(vec![OrderByExpr {
                                 expr: Identifier(Ident::new("b")),
-                                asc: None,
-                                nulls_first: None,
+                                options: OrderByOptions {
+                                    asc: None,
+                                    nulls_first: None,
+                                },
                                 with_fill: None,
-                            }],
+                            }]),
                             interpolate: None,
                         }),
                     }
@@ -366,7 +378,7 @@ fn parse_alter_table_drop_projection() {
         Statement::AlterTable {
             name, operations, ..
         } => {
-            assert_eq!(name, ObjectName(vec!["t0".into()]));
+            assert_eq!(name, ObjectName::from(vec!["t0".into()]));
             assert_eq!(1, operations.len());
             assert_eq!(
                 operations[0],
@@ -399,7 +411,7 @@ fn parse_alter_table_clear_and_materialize_projection() {
             Statement::AlterTable {
                 name, operations, ..
             } => {
-                assert_eq!(name, ObjectName(vec!["t0".into()]));
+                assert_eq!(name, ObjectName::from(vec!["t0".into()]));
                 assert_eq!(1, operations.len());
                 assert_eq!(
                     operations[0],
@@ -518,7 +530,6 @@ fn column_def(name: Ident, data_type: DataType) -> ColumnDef {
     ColumnDef {
         name,
         data_type,
-        collation: None,
         options: vec![],
     }
 }
@@ -543,7 +554,7 @@ fn parse_clickhouse_data_types() {
 
     match clickhouse_and_generic().one_statement_parses_to(sql, &canonical_sql) {
         Statement::CreateTable(CreateTable { name, columns, .. }) => {
-            assert_eq!(name, ObjectName(vec!["table".into()]));
+            assert_eq!(name, ObjectName::from(vec!["table".into()]));
             assert_eq!(
                 columns,
                 vec![
@@ -584,7 +595,7 @@ fn parse_create_table_with_nullable() {
 
     match clickhouse_and_generic().one_statement_parses_to(sql, &canonical_sql) {
         Statement::CreateTable(CreateTable { name, columns, .. }) => {
-            assert_eq!(name, ObjectName(vec!["table".into()]));
+            assert_eq!(name, ObjectName::from(vec!["table".into()]));
             assert_eq!(
                 columns,
                 vec![
@@ -607,7 +618,6 @@ fn parse_create_table_with_nullable() {
                     ColumnDef {
                         name: "d".into(),
                         data_type: DataType::Date32,
-                        collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
                             option: ColumnOption::Null
@@ -633,7 +643,7 @@ fn parse_create_table_with_nested_data_types() {
 
     match clickhouse().one_statement_parses_to(sql, "") {
         Statement::CreateTable(CreateTable { name, columns, .. }) => {
-            assert_eq!(name, ObjectName(vec!["table".into()]));
+            assert_eq!(name, ObjectName::from(vec!["table".into()]));
             assert_eq!(
                 columns,
                 vec![
@@ -651,7 +661,6 @@ fn parse_create_table_with_nested_data_types() {
                                 DataType::LowCardinality(Box::new(DataType::String(None)))
                             )
                         ]),
-                        collation: None,
                         options: vec![],
                     },
                     ColumnDef {
@@ -668,7 +677,6 @@ fn parse_create_table_with_nested_data_types() {
                                 }
                             ])
                         ))),
-                        collation: None,
                         options: vec![],
                     },
                     ColumnDef {
@@ -685,7 +693,6 @@ fn parse_create_table_with_nested_data_types() {
                                 ))
                             },
                         ]),
-                        collation: None,
                         options: vec![],
                     },
                     ColumnDef {
@@ -694,7 +701,6 @@ fn parse_create_table_with_nested_data_types() {
                             Box::new(DataType::String(None)),
                             Box::new(DataType::UInt16)
                         ),
-                        collation: None,
                         options: vec![],
                     },
                 ]
@@ -726,13 +732,11 @@ fn parse_create_table_with_primary_key() {
                     ColumnDef {
                         name: Ident::with_quote('`', "i"),
                         data_type: DataType::Int(None),
-                        collation: None,
                         options: vec![],
                     },
                     ColumnDef {
                         name: Ident::with_quote('`', "k"),
                         data_type: DataType::Int(None),
-                        collation: None,
                         options: vec![],
                     },
                 ],
@@ -749,7 +753,7 @@ fn parse_create_table_with_primary_key() {
                 })
             );
             fn assert_function(actual: &Function, name: &str, arg: &str) -> bool {
-                assert_eq!(actual.name, ObjectName(vec![Ident::new(name)]));
+                assert_eq!(actual.name, ObjectName::from(vec![Ident::new(name)]));
                 assert_eq!(
                     actual.args,
                     FunctionArguments::List(FunctionArgumentList {
@@ -804,11 +808,10 @@ fn parse_create_table_with_variant_default_expressions() {
                     ColumnDef {
                         name: Ident::new("a"),
                         data_type: DataType::Datetime(None),
-                        collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
                             option: ColumnOption::Materialized(Expr::Function(Function {
-                                name: ObjectName(vec![Ident::new("now")]),
+                                name: ObjectName::from(vec![Ident::new("now")]),
                                 uses_odbc_syntax: false,
                                 args: FunctionArguments::List(FunctionArgumentList {
                                     args: vec![],
@@ -826,11 +829,10 @@ fn parse_create_table_with_variant_default_expressions() {
                     ColumnDef {
                         name: Ident::new("b"),
                         data_type: DataType::Datetime(None),
-                        collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
                             option: ColumnOption::Ephemeral(Some(Expr::Function(Function {
-                                name: ObjectName(vec![Ident::new("now")]),
+                                name: ObjectName::from(vec![Ident::new("now")]),
                                 uses_odbc_syntax: false,
                                 args: FunctionArguments::List(FunctionArgumentList {
                                     args: vec![],
@@ -848,7 +850,6 @@ fn parse_create_table_with_variant_default_expressions() {
                     ColumnDef {
                         name: Ident::new("c"),
                         data_type: DataType::Datetime(None),
-                        collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
                             option: ColumnOption::Ephemeral(None)
@@ -857,11 +858,10 @@ fn parse_create_table_with_variant_default_expressions() {
                     ColumnDef {
                         name: Ident::new("d"),
                         data_type: DataType::String(None),
-                        collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
                             option: ColumnOption::Alias(Expr::Function(Function {
-                                name: ObjectName(vec![Ident::new("toString")]),
+                                name: ObjectName::from(vec![Ident::new("toString")]),
                                 uses_odbc_syntax: false,
                                 args: FunctionArguments::List(FunctionArgumentList {
                                     args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(
@@ -889,14 +889,14 @@ fn parse_create_table_with_variant_default_expressions() {
 fn parse_create_view_with_fields_data_types() {
     match clickhouse().verified_stmt(r#"CREATE VIEW v (i "int", f "String") AS SELECT * FROM t"#) {
         Statement::CreateView { name, columns, .. } => {
-            assert_eq!(name, ObjectName(vec!["v".into()]));
+            assert_eq!(name, ObjectName::from(vec!["v".into()]));
             assert_eq!(
                 columns,
                 vec![
                     ViewColumnDef {
                         name: "i".into(),
                         data_type: Some(DataType::Custom(
-                            ObjectName(vec![Ident {
+                            ObjectName::from(vec![Ident {
                                 value: "int".into(),
                                 quote_style: Some('"'),
                                 span: Span::empty(),
@@ -908,7 +908,7 @@ fn parse_create_view_with_fields_data_types() {
                     ViewColumnDef {
                         name: "f".into(),
                         data_type: Some(DataType::Custom(
-                            ObjectName(vec![Ident {
+                            ObjectName::from(vec![Ident {
                                 value: "String".into(),
                                 quote_style: Some('"'),
                                 span: Span::empty(),
@@ -944,6 +944,12 @@ fn parse_limit_by() {
     clickhouse_and_generic().verified_stmt(
         r#"SELECT * FROM default.last_asset_runs_mv ORDER BY created_at DESC LIMIT 1 BY asset, toStartOfDay(created_at)"#,
     );
+    clickhouse_and_generic().parse_sql_statements(
+        r#"SELECT * FROM default.last_asset_runs_mv ORDER BY created_at DESC BY asset, toStartOfDay(created_at)"#,
+    ).expect_err("BY without LIMIT");
+    clickhouse_and_generic()
+        .parse_sql_statements("SELECT * FROM T OFFSET 5 BY foo")
+        .expect_err("BY with OFFSET but without LIMIT");
 }
 
 #[test]
@@ -1016,17 +1022,15 @@ fn parse_select_parametric_function() {
                     assert_eq!(parameters.args.len(), 2);
                     assert_eq!(
                         parameters.args[0],
-                        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(Value::Number(
-                            "0.5".parse().unwrap(),
-                            false
-                        ))))
+                        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(
+                            (Value::Number("0.5".parse().unwrap(), false)).with_empty_span()
+                        )))
                     );
                     assert_eq!(
                         parameters.args[1],
-                        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(Value::Number(
-                            "0.6".parse().unwrap(),
-                            false
-                        ))))
+                        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(
+                            (Value::Number("0.6".parse().unwrap(), false)).with_empty_span()
+                        )))
                     );
                 }
                 _ => unreachable!(),
@@ -1060,61 +1064,6 @@ fn parse_create_materialized_view() {
 }
 
 #[test]
-fn parse_group_by_with_modifier() {
-    let clauses = ["x", "a, b", "ALL"];
-    let modifiers = [
-        "WITH ROLLUP",
-        "WITH CUBE",
-        "WITH TOTALS",
-        "WITH ROLLUP WITH CUBE",
-    ];
-    let expected_modifiers = [
-        vec![GroupByWithModifier::Rollup],
-        vec![GroupByWithModifier::Cube],
-        vec![GroupByWithModifier::Totals],
-        vec![GroupByWithModifier::Rollup, GroupByWithModifier::Cube],
-    ];
-    for clause in &clauses {
-        for (modifier, expected_modifier) in modifiers.iter().zip(expected_modifiers.iter()) {
-            let sql = format!("SELECT * FROM t GROUP BY {clause} {modifier}");
-            match clickhouse_and_generic().verified_stmt(&sql) {
-                Statement::Query(query) => {
-                    let group_by = &query.body.as_select().unwrap().group_by;
-                    if clause == &"ALL" {
-                        assert_eq!(group_by, &GroupByExpr::All(expected_modifier.to_vec()));
-                    } else {
-                        assert_eq!(
-                            group_by,
-                            &GroupByExpr::Expressions(
-                                clause
-                                    .split(", ")
-                                    .map(|c| Identifier(Ident::new(c)))
-                                    .collect(),
-                                expected_modifier.to_vec()
-                            )
-                        );
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    // invalid cases
-    let invalid_cases = [
-        "SELECT * FROM t GROUP BY x WITH",
-        "SELECT * FROM t GROUP BY x WITH ROLLUP CUBE",
-        "SELECT * FROM t GROUP BY x WITH WITH ROLLUP",
-        "SELECT * FROM t GROUP BY WITH ROLLUP",
-    ];
-    for sql in invalid_cases {
-        clickhouse_and_generic()
-            .parse_sql_statements(sql)
-            .expect_err("Expected: one of ROLLUP or CUBE or TOTALS, found: WITH");
-    }
-}
-
-#[test]
 fn parse_select_order_by_with_fill_interpolate() {
     let sql = "SELECT id, fname, lname FROM customer WHERE id < 5 \
         ORDER BY \
@@ -1125,42 +1074,53 @@ fn parse_select_order_by_with_fill_interpolate() {
     let select = clickhouse().verified_query(sql);
     assert_eq!(
         OrderBy {
-            exprs: vec![
+            kind: OrderByKind::Expressions(vec![
                 OrderByExpr {
                     expr: Expr::Identifier(Ident::new("fname")),
-                    asc: Some(true),
-                    nulls_first: Some(true),
+                    options: OrderByOptions {
+                        asc: Some(true),
+                        nulls_first: Some(true),
+                    },
                     with_fill: Some(WithFill {
-                        from: Some(Expr::Value(number("10"))),
-                        to: Some(Expr::Value(number("20"))),
-                        step: Some(Expr::Value(number("2"))),
+                        from: Some(Expr::value(number("10"))),
+                        to: Some(Expr::value(number("20"))),
+                        step: Some(Expr::value(number("2"))),
                     }),
                 },
                 OrderByExpr {
                     expr: Expr::Identifier(Ident::new("lname")),
-                    asc: Some(false),
-                    nulls_first: Some(false),
+                    options: OrderByOptions {
+                        asc: Some(false),
+                        nulls_first: Some(false),
+                    },
                     with_fill: Some(WithFill {
-                        from: Some(Expr::Value(number("30"))),
-                        to: Some(Expr::Value(number("40"))),
-                        step: Some(Expr::Value(number("3"))),
+                        from: Some(Expr::value(number("30"))),
+                        to: Some(Expr::value(number("40"))),
+                        step: Some(Expr::value(number("3"))),
                     }),
                 },
-            ],
+            ]),
             interpolate: Some(Interpolate {
                 exprs: Some(vec![InterpolateExpr {
                     column: Ident::new("col1"),
                     expr: Some(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier(Ident::new("col1"))),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Value(number("1"))),
+                        right: Box::new(Expr::value(number("1"))),
                     }),
                 }])
             })
         },
         select.order_by.expect("ORDER BY expected")
     );
-    assert_eq!(Some(Expr::Value(number("2"))), select.limit);
+    assert_eq!(
+        select.limit_clause,
+        Some(LimitClause::LimitOffset {
+            limit: Some(Expr::value(number("2"))),
+            offset: None,
+            limit_by: vec![]
+        })
+    );
 }
 
 #[test]
@@ -1201,11 +1161,15 @@ fn parse_with_fill() {
     let select = clickhouse().verified_query(sql);
     assert_eq!(
         Some(WithFill {
-            from: Some(Expr::Value(number("10"))),
-            to: Some(Expr::Value(number("20"))),
-            step: Some(Expr::Value(number("2"))),
-        }),
-        select.order_by.expect("ORDER BY expected").exprs[0].with_fill
+            from: Some(Expr::value(number("10"))),
+            to: Some(Expr::value(number("20"))),
+            step: Some(Expr::value(number("2"))),
+        })
+        .as_ref(),
+        match select.order_by.expect("ORDER BY expected").kind {
+            OrderByKind::Expressions(ref exprs) => exprs[0].with_fill.as_ref(),
+            _ => None,
+        }
     );
 }
 
@@ -1240,7 +1204,7 @@ fn parse_interpolate_body_with_columns() {
                     expr: Some(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier(Ident::new("col1"))),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Value(number("1"))),
+                        right: Box::new(Expr::value(number("1"))),
                     }),
                 },
                 InterpolateExpr {
@@ -1252,12 +1216,17 @@ fn parse_interpolate_body_with_columns() {
                     expr: Some(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier(Ident::new("col4"))),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Value(number("4"))),
+                        right: Box::new(Expr::value(number("4"))),
                     }),
                 },
             ])
-        }),
-        select.order_by.expect("ORDER BY expected").interpolate
+        })
+        .as_ref(),
+        select
+            .order_by
+            .expect("ORDER BY expected")
+            .interpolate
+            .as_ref()
     );
 }
 
@@ -1266,8 +1235,12 @@ fn parse_interpolate_without_body() {
     let sql = "SELECT fname FROM customer ORDER BY fname WITH FILL INTERPOLATE";
     let select = clickhouse().verified_query(sql);
     assert_eq!(
-        Some(Interpolate { exprs: None }),
-        select.order_by.expect("ORDER BY expected").interpolate
+        Some(Interpolate { exprs: None }).as_ref(),
+        select
+            .order_by
+            .expect("ORDER BY expected")
+            .interpolate
+            .as_ref()
     );
 }
 
@@ -1278,8 +1251,13 @@ fn parse_interpolate_with_empty_body() {
     assert_eq!(
         Some(Interpolate {
             exprs: Some(vec![])
-        }),
-        select.order_by.expect("ORDER BY expected").interpolate
+        })
+        .as_ref(),
+        select
+            .order_by
+            .expect("ORDER BY expected")
+            .interpolate
+            .as_ref()
     );
 }
 
@@ -1293,7 +1271,9 @@ fn test_prewhere() {
                 Some(&BinaryOp {
                     left: Box::new(Identifier(Ident::new("x"))),
                     op: BinaryOperator::Eq,
-                    right: Box::new(Expr::Value(Value::Number("1".parse().unwrap(), false))),
+                    right: Box::new(Expr::Value(
+                        (Value::Number("1".parse().unwrap(), false)).with_empty_span()
+                    )),
                 })
             );
             let selection = query.as_ref().body.as_select().unwrap().selection.as_ref();
@@ -1302,7 +1282,9 @@ fn test_prewhere() {
                 Some(&BinaryOp {
                     left: Box::new(Identifier(Ident::new("y"))),
                     op: BinaryOperator::Eq,
-                    right: Box::new(Expr::Value(Value::Number("2".parse().unwrap(), false))),
+                    right: Box::new(Expr::Value(
+                        (Value::Number("2".parse().unwrap(), false)).with_empty_span()
+                    )),
                 })
             );
         }
@@ -1318,13 +1300,17 @@ fn test_prewhere() {
                     left: Box::new(BinaryOp {
                         left: Box::new(Identifier(Ident::new("x"))),
                         op: BinaryOperator::Eq,
-                        right: Box::new(Expr::Value(Value::Number("1".parse().unwrap(), false))),
+                        right: Box::new(Expr::Value(
+                            (Value::Number("1".parse().unwrap(), false)).with_empty_span()
+                        )),
                     }),
                     op: BinaryOperator::And,
                     right: Box::new(BinaryOp {
                         left: Box::new(Identifier(Ident::new("y"))),
                         op: BinaryOperator::Eq,
-                        right: Box::new(Expr::Value(Value::Number("2".parse().unwrap(), false))),
+                        right: Box::new(Expr::Value(
+                            (Value::Number("2".parse().unwrap(), false)).with_empty_span()
+                        )),
                     }),
                 })
             );
@@ -1349,7 +1335,7 @@ fn parse_use() {
         // Test single identifier without quotes
         assert_eq!(
             clickhouse().verified_stmt(&format!("USE {}", object_name)),
-            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+            Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
         );
@@ -1357,7 +1343,7 @@ fn parse_use() {
             // Test single identifier with different type of quotes
             assert_eq!(
                 clickhouse().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
-                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
                 )])))
@@ -1399,6 +1385,26 @@ fn test_query_with_format_clause() {
 }
 
 #[test]
+fn test_insert_query_with_format_clause() {
+    let cases = [
+        r#"INSERT INTO tbl FORMAT JSONEachRow {"id": 1, "value": "foo"}, {"id": 2, "value": "bar"}"#,
+        r#"INSERT INTO tbl FORMAT JSONEachRow ["first", "second", "third"]"#,
+        r#"INSERT INTO tbl FORMAT JSONEachRow [{"first": 1}]"#,
+        r#"INSERT INTO tbl (foo) FORMAT JSONAsObject {"foo": {"bar": {"x": "y"}, "baz": 1}}"#,
+        r#"INSERT INTO tbl (foo, bar) FORMAT JSON {"foo": 1, "bar": 2}"#,
+        r#"INSERT INTO tbl FORMAT CSV col1, col2, col3"#,
+        r#"INSERT INTO tbl FORMAT LineAsString "I love apple", "I love banana", "I love orange""#,
+        r#"INSERT INTO tbl (foo) SETTINGS input_format_json_read_bools_as_numbers = true FORMAT JSONEachRow {"id": 1, "value": "foo"}"#,
+        r#"INSERT INTO tbl SETTINGS format_template_resultset = '/some/path/resultset.format', format_template_row = '/some/path/row.format' FORMAT Template"#,
+        r#"INSERT INTO tbl SETTINGS input_format_json_read_bools_as_numbers = true FORMAT JSONEachRow {"id": 1, "value": "foo"}"#,
+    ];
+
+    for sql in &cases {
+        clickhouse().verified_stmt(sql);
+    }
+}
+
+#[test]
 fn parse_create_table_on_commit_and_as_query() {
     let sql = r#"CREATE LOCAL TEMPORARY TABLE test ON COMMIT PRESERVE ROWS AS SELECT 1"#;
     match clickhouse_and_generic().verified_stmt(sql) {
@@ -1412,10 +1418,9 @@ fn parse_create_table_on_commit_and_as_query() {
             assert_eq!(on_commit, Some(OnCommit::PreserveRows));
             assert_eq!(
                 query.unwrap().body.as_select().unwrap().projection,
-                vec![UnnamedExpr(Expr::Value(Value::Number(
-                    "1".parse().unwrap(),
-                    false
-                )))]
+                vec![UnnamedExpr(Expr::Value(
+                    (Value::Number("1".parse().unwrap(), false)).with_empty_span()
+                ))]
             );
         }
         _ => unreachable!(),
@@ -1428,9 +1433,9 @@ fn parse_freeze_and_unfreeze_partition() {
     for operation_name in &["FREEZE", "UNFREEZE"] {
         let sql = format!("ALTER TABLE t {operation_name} PARTITION '2024-08-14'");
 
-        let expected_partition = Partition::Expr(Expr::Value(Value::SingleQuotedString(
-            "2024-08-14".to_string(),
-        )));
+        let expected_partition = Partition::Expr(Expr::Value(
+            Value::SingleQuotedString("2024-08-14".to_string()).with_empty_span(),
+        ));
         match clickhouse_and_generic().verified_stmt(&sql) {
             Statement::AlterTable { operations, .. } => {
                 assert_eq!(operations.len(), 1);
@@ -1458,9 +1463,9 @@ fn parse_freeze_and_unfreeze_partition() {
         match clickhouse_and_generic().verified_stmt(&sql) {
             Statement::AlterTable { operations, .. } => {
                 assert_eq!(operations.len(), 1);
-                let expected_partition = Partition::Expr(Expr::Value(Value::SingleQuotedString(
-                    "2024-08-14".to_string(),
-                )));
+                let expected_partition = Partition::Expr(Expr::Value(
+                    Value::SingleQuotedString("2024-08-14".to_string()).with_empty_span(),
+                ));
                 let expected_operation = if operation_name == &"FREEZE" {
                     AlterTableOperation::FreezePartition {
                         partition: expected_partition,
