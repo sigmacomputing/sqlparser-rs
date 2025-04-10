@@ -1876,6 +1876,8 @@ impl Spanned for TableFactor {
             } => subquery
                 .span()
                 .union_opt(&alias.as_ref().map(|alias| alias.span())),
+            // This is usually created at runtime, so we don't have a span for it
+            TableFactor::PassThroughQuery { query: _, alias: _ } => Span::empty(),
             TableFactor::TableFunction { expr, alias } => expr
                 .span()
                 .union_opt(&alias.as_ref().map(|alias| alias.span())),

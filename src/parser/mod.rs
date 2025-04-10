@@ -11971,7 +11971,8 @@ impl<'a> Parser<'a> {
                         | TableFactor::Pivot { alias, .. }
                         | TableFactor::Unpivot { alias, .. }
                         | TableFactor::MatchRecognize { alias, .. }
-                        | TableFactor::NestedJoin { alias, .. } => {
+                        | TableFactor::NestedJoin { alias, .. }
+                        | TableFactor::PassThroughQuery { alias, .. } => {
                             // but not `FROM (mytable AS alias1) AS alias2`.
                             if let Some(inner_alias) = alias {
                                 return Err(ParserError::ParserError(format!(
