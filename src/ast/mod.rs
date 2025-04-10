@@ -728,6 +728,13 @@ pub enum Expr {
         subquery: Box<Query>,
         negated: bool,
     },
+    /// XXX not valid SQL syntax, this is a hack needed to support parameter substitution
+    /// `[ NOT ] IN <in_expr>`
+    InExpr {
+        expr: Box<Expr>,
+        in_expr: Box<Expr>,
+        negated: bool,
+    },
     /// `[ NOT ] IN UNNEST(array_expression)`
     InUnnest {
         expr: Box<Expr>,
@@ -1393,6 +1400,17 @@ impl fmt::Display for Expr {
                 expr,
                 if *negated { "NOT " } else { "" },
                 subquery
+            ),
+            Expr::InExpr {
+                expr,
+                in_expr,
+                negated,
+            } => write!(
+                f,
+                "{} {}IN {}",
+                expr,
+                if *negated { "NOT " } else { "" },
+                in_expr,
             ),
             Expr::InUnnest {
                 expr,
