@@ -29,15 +29,17 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "visitor")]
 use sqlparser_derive::{Visit, VisitMut};
 
+use crate::display_utils::{indented_list, DisplayCommaSeparated, Indent, NewLine, SpaceOrNewline};
+
 pub use super::ddl::{ColumnDef, TableConstraint};
 
 use super::{
     display_comma_separated, display_separated, query::InputFormatClause, Assignment, ClusteredBy,
-    CommentDef, Expr, FileFormat, FromTable, HiveDistributionStyle, HiveFormat, HiveIOFormat,
-    HiveRowFormat, Ident, IndexType, InsertAliases, MysqlInsertPriority, ObjectName, OnCommit,
-    OnInsert, OneOrManyWithParens, OrderByExpr, Query, RowAccessPolicy, SelectItem, Setting,
-    SqlOption, SqliteOnConflict, StorageSerializationPolicy, TableEngine, TableObject,
-    TableWithJoins, Tag, WrappedCollection,
+    CommentDef, CreateTableOptions, Expr, FileFormat, FromTable, HiveDistributionStyle, HiveFormat,
+    HiveIOFormat, HiveRowFormat, Ident, IndexType, InsertAliases, MysqlInsertPriority, ObjectName,
+    OnCommit, OnInsert, OneOrManyWithParens, OrderByExpr, Query, RowAccessPolicy, SelectItem,
+    Setting, SqliteOnConflict, StorageSerializationPolicy, TableObject, TableWithJoins, Tag,
+    WrappedCollection,
 };
 
 /// Index column type.
@@ -146,19 +148,17 @@ pub struct CreateTable {
     pub constraints: Vec<TableConstraint>,
     pub hive_distribution: HiveDistributionStyle,
     pub hive_formats: Option<HiveFormat>,
-    pub table_properties: Vec<SqlOption>,
-    pub with_options: Vec<SqlOption>,
+    pub table_options: CreateTableOptions,
     pub file_format: Option<FileFormat>,
     pub location: Option<String>,
     pub query: Option<Box<Query>>,
     pub without_rowid: bool,
     pub like: Option<ObjectName>,
     pub clone: Option<ObjectName>,
-    pub engine: Option<TableEngine>,
+    // For Hive dialect, the table comment is after the column definitions without `=`,
+    // so the `comment` field is optional and different than the comment field in the general options list.
+    // [Hive](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-CreateTable)
     pub comment: Option<CommentDef>,
-    pub auto_increment_offset: Option<u32>,
-    pub default_charset: Option<String>,
-    pub collation: Option<String>,
     pub on_commit: Option<OnCommit>,
     /// ClickHouse "ON CLUSTER" clause:
     /// <https://clickhouse.com/docs/en/sql-reference/distributed-ddl/>
@@ -179,9 +179,11 @@ pub struct CreateTable {
     /// Hive: Table clustering column list.
     /// <https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-CreateTable>
     pub clustered_by: Option<ClusteredBy>,
-    /// BigQuery: Table options list.
-    /// <https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#table_option_list>
-    pub options: Option<Vec<SqlOption>>,
+    /// Postgres `INHERITs` clause, which contains the list of tables from which
+    /// the new table inherits.
+    /// <https://www.postgresql.org/docs/current/ddl-inherit.html>
+    /// <https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-PARMS-INHERITS>
+    pub inherits: Option<Vec<ObjectName>>,
     /// SQLite "STRICT" clause.
     /// if the "STRICT" table-option keyword is added to the end, after the closing ")",
     /// then strict typing rules apply to that table.
@@ -265,19 +267,24 @@ impl Display for CreateTable {
             write!(f, " ON CLUSTER {}", on_cluster)?;
         }
         if !self.columns.is_empty() || !self.constraints.is_empty() {
-            write!(f, " ({}", display_comma_separated(&self.columns))?;
+            f.write_str(" (")?;
+            NewLine.fmt(f)?;
+            Indent(DisplayCommaSeparated(&self.columns)).fmt(f)?;
             if !self.columns.is_empty() && !self.constraints.is_empty() {
-                write!(f, ", ")?;
+                f.write_str(",")?;
+                SpaceOrNewline.fmt(f)?;
             }
-            write!(f, "{})", display_comma_separated(&self.constraints))?;
+            Indent(DisplayCommaSeparated(&self.constraints)).fmt(f)?;
+            NewLine.fmt(f)?;
+            f.write_str(")")?;
         } else if self.query.is_none() && self.like.is_none() && self.clone.is_none() {
             // PostgreSQL allows `CREATE TABLE t ();`, but requires empty parens
-            write!(f, " ()")?;
+            f.write_str(" ()")?;
         }
 
         // Hive table comment should be after column definitions, please refer to:
         // [Hive](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-CreateTable)
-        if let Some(CommentDef::AfterColumnDefsWithoutEq(comment)) = &self.comment {
+        if let Some(comment) = &self.comment {
             write!(f, " COMMENT '{comment}'")?;
         }
 
@@ -370,40 +377,22 @@ impl Display for CreateTable {
             }
             write!(f, " LOCATION '{}'", self.location.as_ref().unwrap())?;
         }
-        if !self.table_properties.is_empty() {
-            write!(
-                f,
-                " TBLPROPERTIES ({})",
-                display_comma_separated(&self.table_properties)
-            )?;
-        }
-        if !self.with_options.is_empty() {
-            write!(f, " WITH ({})", display_comma_separated(&self.with_options))?;
-        }
-        if let Some(engine) = &self.engine {
-            write!(f, " ENGINE={engine}")?;
-        }
-        if let Some(comment_def) = &self.comment {
-            match comment_def {
-                CommentDef::WithEq(comment) => {
-                    write!(f, " COMMENT = '{comment}'")?;
-                }
-                CommentDef::WithoutEq(comment) => {
-                    write!(f, " COMMENT '{comment}'")?;
-                }
-                // For CommentDef::AfterColumnDefsWithoutEq will be displayed after column definition
-                CommentDef::AfterColumnDefsWithoutEq(_) => (),
-            }
+
+        match &self.table_options {
+            options @ CreateTableOptions::With(_)
+            | options @ CreateTableOptions::Plain(_)
+            | options @ CreateTableOptions::TableProperties(_) => write!(f, " {}", options)?,
+            _ => (),
         }
 
-        if let Some(auto_increment_offset) = self.auto_increment_offset {
-            write!(f, " AUTO_INCREMENT {auto_increment_offset}")?;
-        }
         if let Some(primary_key) = &self.primary_key {
             write!(f, " PRIMARY KEY {}", primary_key)?;
         }
         if let Some(order_by) = &self.order_by {
             write!(f, " ORDER BY {}", order_by)?;
+        }
+        if let Some(inherits) = &self.inherits {
+            write!(f, " INHERITS ({})", display_comma_separated(inherits))?;
         }
         if let Some(partition_by) = self.partition_by.as_ref() {
             write!(f, " PARTITION BY {partition_by}")?;
@@ -411,15 +400,9 @@ impl Display for CreateTable {
         if let Some(cluster_by) = self.cluster_by.as_ref() {
             write!(f, " CLUSTER BY {cluster_by}")?;
         }
-
-        if let Some(options) = self.options.as_ref() {
-            write!(
-                f,
-                " OPTIONS({})",
-                display_comma_separated(options.as_slice())
-            )?;
+        if let options @ CreateTableOptions::Options(_) = &self.table_options {
+            write!(f, " {}", options)?;
         }
-
         if let Some(external_volume) = self.external_volume.as_ref() {
             write!(f, " EXTERNAL_VOLUME = '{external_volume}'")?;
         }
@@ -493,13 +476,6 @@ impl Display for CreateTable {
 
         if let Some(tag) = &self.with_tags {
             write!(f, " WITH TAG ({})", display_comma_separated(tag.as_slice()))?;
-        }
-
-        if let Some(default_charset) = &self.default_charset {
-            write!(f, " DEFAULT CHARSET={default_charset}")?;
-        }
-        if let Some(collation) = &self.collation {
-            write!(f, " COLLATE={collation}")?;
         }
 
         if self.on_commit.is_some() {
@@ -610,28 +586,32 @@ impl Display for Insert {
             )?;
         }
         if !self.columns.is_empty() {
-            write!(f, "({}) ", display_comma_separated(&self.columns))?;
+            write!(f, "({})", display_comma_separated(&self.columns))?;
+            SpaceOrNewline.fmt(f)?;
         }
         if let Some(ref parts) = self.partitioned {
             if !parts.is_empty() {
-                write!(f, "PARTITION ({}) ", display_comma_separated(parts))?;
+                write!(f, "PARTITION ({})", display_comma_separated(parts))?;
+                SpaceOrNewline.fmt(f)?;
             }
         }
         if !self.after_columns.is_empty() {
-            write!(f, "({}) ", display_comma_separated(&self.after_columns))?;
+            write!(f, "({})", display_comma_separated(&self.after_columns))?;
+            SpaceOrNewline.fmt(f)?;
         }
 
         if let Some(settings) = &self.settings {
-            write!(f, "SETTINGS {} ", display_comma_separated(settings))?;
+            write!(f, "SETTINGS {}", display_comma_separated(settings))?;
+            SpaceOrNewline.fmt(f)?;
         }
 
         if let Some(source) = &self.source {
-            write!(f, "{source}")?;
+            source.fmt(f)?;
         } else if !self.assignments.is_empty() {
-            write!(f, "SET ")?;
-            write!(f, "{}", display_comma_separated(&self.assignments))?;
+            write!(f, "SET")?;
+            indented_list(f, &self.assignments)?;
         } else if let Some(format_clause) = &self.format_clause {
-            write!(f, "{format_clause}")?;
+            format_clause.fmt(f)?;
         } else if self.columns.is_empty() {
             write!(f, "DEFAULT VALUES")?;
         }
@@ -651,7 +631,9 @@ impl Display for Insert {
         }
 
         if let Some(returning) = &self.returning {
-            write!(f, " RETURNING {}", display_comma_separated(returning))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("RETURNING")?;
+            indented_list(f, returning)?;
         }
         Ok(())
     }
@@ -680,32 +662,45 @@ pub struct Delete {
 
 impl Display for Delete {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DELETE ")?;
+        f.write_str("DELETE")?;
         if !self.tables.is_empty() {
-            write!(f, "{} ", display_comma_separated(&self.tables))?;
+            indented_list(f, &self.tables)?;
         }
         match &self.from {
             FromTable::WithFromKeyword(from) => {
-                write!(f, "FROM {}", display_comma_separated(from))?;
+                f.write_str(" FROM")?;
+                indented_list(f, from)?;
             }
             FromTable::WithoutKeyword(from) => {
-                write!(f, "{}", display_comma_separated(from))?;
+                indented_list(f, from)?;
             }
         }
         if let Some(using) = &self.using {
-            write!(f, " USING {}", display_comma_separated(using))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("USING")?;
+            indented_list(f, using)?;
         }
         if let Some(selection) = &self.selection {
-            write!(f, " WHERE {selection}")?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("WHERE")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(selection).fmt(f)?;
         }
         if let Some(returning) = &self.returning {
-            write!(f, " RETURNING {}", display_comma_separated(returning))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("RETURNING")?;
+            indented_list(f, returning)?;
         }
         if !self.order_by.is_empty() {
-            write!(f, " ORDER BY {}", display_comma_separated(&self.order_by))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("ORDER BY")?;
+            indented_list(f, &self.order_by)?;
         }
         if let Some(limit) = &self.limit {
-            write!(f, " LIMIT {limit}")?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("LIMIT")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(limit).fmt(f)?;
         }
         Ok(())
     }

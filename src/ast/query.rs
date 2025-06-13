@@ -27,6 +27,7 @@ use sqlparser_derive::{Visit, VisitMut};
 
 use crate::{
     ast::*,
+    display_utils::{indented_list, SpaceOrNewline},
     tokenizer::{Token, TokenWithSpan},
 };
 
@@ -62,35 +63,49 @@ pub struct Query {
     /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/format)
     /// (ClickHouse-specific)
     pub format_clause: Option<FormatClause>,
+
+    /// Pipe operator
+    pub pipe_operators: Vec<PipeOperator>,
 }
 
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(ref with) = self.with {
-            write!(f, "{with} ")?;
+            with.fmt(f)?;
+            SpaceOrNewline.fmt(f)?;
         }
-        write!(f, "{}", self.body)?;
+        self.body.fmt(f)?;
         if let Some(ref order_by) = self.order_by {
-            write!(f, " {order_by}")?;
+            f.write_str(" ")?;
+            order_by.fmt(f)?;
         }
 
         if let Some(ref limit_clause) = self.limit_clause {
             limit_clause.fmt(f)?;
         }
         if let Some(ref settings) = self.settings {
-            write!(f, " SETTINGS {}", display_comma_separated(settings))?;
+            f.write_str(" SETTINGS ")?;
+            display_comma_separated(settings).fmt(f)?;
         }
         if let Some(ref fetch) = self.fetch {
-            write!(f, " {fetch}")?;
+            f.write_str(" ")?;
+            fetch.fmt(f)?;
         }
         if !self.locks.is_empty() {
-            write!(f, " {}", display_separated(&self.locks, " "))?;
+            f.write_str(" ")?;
+            display_separated(&self.locks, " ").fmt(f)?;
         }
         if let Some(ref for_clause) = self.for_clause {
-            write!(f, " {}", for_clause)?;
+            f.write_str(" ")?;
+            for_clause.fmt(f)?;
         }
         if let Some(ref format) = self.format_clause {
-            write!(f, " {}", format)?;
+            f.write_str(" ")?;
+            format.fmt(f)?;
+        }
+        for pipe_operator in &self.pipe_operators {
+            f.write_str(" |> ")?;
+            pipe_operator.fmt(f)?;
         }
         Ok(())
     }
@@ -163,29 +178,39 @@ impl SetExpr {
 impl fmt::Display for SetExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SetExpr::Select(s) => write!(f, "{s}"),
-            SetExpr::Query(q) => write!(f, "({q})"),
-            SetExpr::Values(v) => write!(f, "{v}"),
-            SetExpr::Insert(v) => write!(f, "{v}"),
-            SetExpr::Update(v) => write!(f, "{v}"),
-            SetExpr::Delete(v) => write!(f, "{v}"),
-            SetExpr::Table(t) => write!(f, "{t}"),
+            SetExpr::Select(s) => s.fmt(f),
+            SetExpr::Query(q) => {
+                f.write_str("(")?;
+                q.fmt(f)?;
+                f.write_str(")")
+            }
+            SetExpr::Values(v) => v.fmt(f),
+            SetExpr::Insert(v) => v.fmt(f),
+            SetExpr::Update(v) => v.fmt(f),
+            SetExpr::Delete(v) => v.fmt(f),
+            SetExpr::Table(t) => t.fmt(f),
             SetExpr::SetOperation {
                 left,
                 right,
                 op,
                 set_quantifier,
             } => {
-                write!(f, "{left} {op}")?;
+                left.fmt(f)?;
+                SpaceOrNewline.fmt(f)?;
+                op.fmt(f)?;
                 match set_quantifier {
                     SetQuantifier::All
                     | SetQuantifier::Distinct
                     | SetQuantifier::ByName
                     | SetQuantifier::AllByName
-                    | SetQuantifier::DistinctByName => write!(f, " {set_quantifier}")?,
-                    SetQuantifier::None => write!(f, "{set_quantifier}")?,
+                    | SetQuantifier::DistinctByName => {
+                        f.write_str(" ")?;
+                        set_quantifier.fmt(f)?;
+                    }
+                    SetQuantifier::None => {}
                 }
-                write!(f, " {right}")?;
+                SpaceOrNewline.fmt(f)?;
+                right.fmt(f)?;
                 Ok(())
             }
         }
@@ -236,7 +261,7 @@ impl fmt::Display for SetQuantifier {
             SetQuantifier::ByName => write!(f, "BY NAME"),
             SetQuantifier::AllByName => write!(f, "ALL BY NAME"),
             SetQuantifier::DistinctByName => write!(f, "DISTINCT BY NAME"),
-            SetQuantifier::None => write!(f, ""),
+            SetQuantifier::None => Ok(()),
         }
     }
 }
@@ -316,7 +341,7 @@ pub struct Select {
     /// DISTRIBUTE BY (Hive)
     pub distribute_by: Vec<Expr>,
     /// SORT BY (Hive)
-    pub sort_by: Vec<Expr>,
+    pub sort_by: Vec<OrderByExpr>,
     /// HAVING
     pub having: Option<Expr>,
     /// WINDOW AS
@@ -351,90 +376,122 @@ impl fmt::Display for Select {
         }
 
         if let Some(value_table_mode) = self.value_table_mode {
-            write!(f, " {value_table_mode}")?;
+            f.write_str(" ")?;
+            value_table_mode.fmt(f)?;
         }
 
         if let Some(ref top) = self.top {
             if self.top_before_distinct {
-                write!(f, " {top}")?;
+                f.write_str(" ")?;
+                top.fmt(f)?;
             }
         }
         if let Some(ref distinct) = self.distinct {
-            write!(f, " {distinct}")?;
+            f.write_str(" ")?;
+            distinct.fmt(f)?;
         }
         if let Some(ref top) = self.top {
             if !self.top_before_distinct {
-                write!(f, " {top}")?;
+                f.write_str(" ")?;
+                top.fmt(f)?;
             }
         }
 
         if !self.projection.is_empty() {
-            write!(f, " {}", display_comma_separated(&self.projection))?;
+            indented_list(f, &self.projection)?;
         }
 
         if let Some(ref into) = self.into {
-            write!(f, " {into}")?;
+            f.write_str(" ")?;
+            into.fmt(f)?;
         }
 
         if self.flavor == SelectFlavor::Standard && !self.from.is_empty() {
-            write!(f, " FROM {}", display_comma_separated(&self.from))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("FROM")?;
+            indented_list(f, &self.from)?;
         }
         if !self.lateral_views.is_empty() {
             for lv in &self.lateral_views {
-                write!(f, "{lv}")?;
+                lv.fmt(f)?;
             }
         }
         if let Some(ref prewhere) = self.prewhere {
-            write!(f, " PREWHERE {prewhere}")?;
+            f.write_str(" PREWHERE ")?;
+            prewhere.fmt(f)?;
         }
         if let Some(ref selection) = self.selection {
-            write!(f, " WHERE {selection}")?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("WHERE")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(selection).fmt(f)?;
         }
         match &self.group_by {
-            GroupByExpr::All(_) => write!(f, " {}", self.group_by)?,
+            GroupByExpr::All(_) => {
+                SpaceOrNewline.fmt(f)?;
+                self.group_by.fmt(f)?;
+            }
             GroupByExpr::Expressions(exprs, _) => {
                 if !exprs.is_empty() {
-                    write!(f, " {}", self.group_by)?
+                    SpaceOrNewline.fmt(f)?;
+                    self.group_by.fmt(f)?;
                 }
             }
         }
         if !self.cluster_by.is_empty() {
-            write!(
-                f,
-                " CLUSTER BY {}",
-                display_comma_separated(&self.cluster_by)
-            )?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("CLUSTER BY")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(display_comma_separated(&self.cluster_by)).fmt(f)?;
         }
         if !self.distribute_by.is_empty() {
-            write!(
-                f,
-                " DISTRIBUTE BY {}",
-                display_comma_separated(&self.distribute_by)
-            )?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("DISTRIBUTE BY")?;
+            SpaceOrNewline.fmt(f)?;
+            display_comma_separated(&self.distribute_by).fmt(f)?;
         }
         if !self.sort_by.is_empty() {
-            write!(f, " SORT BY {}", display_comma_separated(&self.sort_by))?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("SORT BY")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(display_comma_separated(&self.sort_by)).fmt(f)?;
         }
         if let Some(ref having) = self.having {
-            write!(f, " HAVING {having}")?;
+            SpaceOrNewline.fmt(f)?;
+            f.write_str("HAVING")?;
+            SpaceOrNewline.fmt(f)?;
+            Indent(having).fmt(f)?;
         }
         if self.window_before_qualify {
             if !self.named_window.is_empty() {
-                write!(f, " WINDOW {}", display_comma_separated(&self.named_window))?;
+                SpaceOrNewline.fmt(f)?;
+                f.write_str("WINDOW")?;
+                SpaceOrNewline.fmt(f)?;
+                display_comma_separated(&self.named_window).fmt(f)?;
             }
             if let Some(ref qualify) = self.qualify {
-                write!(f, " QUALIFY {qualify}")?;
+                SpaceOrNewline.fmt(f)?;
+                f.write_str("QUALIFY")?;
+                SpaceOrNewline.fmt(f)?;
+                qualify.fmt(f)?;
             }
         } else {
             if let Some(ref qualify) = self.qualify {
-                write!(f, " QUALIFY {qualify}")?;
+                SpaceOrNewline.fmt(f)?;
+                f.write_str("QUALIFY")?;
+                SpaceOrNewline.fmt(f)?;
+                qualify.fmt(f)?;
             }
             if !self.named_window.is_empty() {
-                write!(f, " WINDOW {}", display_comma_separated(&self.named_window))?;
+                SpaceOrNewline.fmt(f)?;
+                f.write_str("WINDOW")?;
+                SpaceOrNewline.fmt(f)?;
+                display_comma_separated(&self.named_window).fmt(f)?;
             }
         }
         if let Some(ref connect_by) = self.connect_by {
-            write!(f, " {connect_by}")?;
+            SpaceOrNewline.fmt(f)?;
+            connect_by.fmt(f)?;
         }
         Ok(())
     }
@@ -540,12 +597,12 @@ pub struct With {
 
 impl fmt::Display for With {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "WITH {}{}",
-            if self.recursive { "RECURSIVE " } else { "" },
-            display_comma_separated(&self.cte_tables)
-        )
+        f.write_str("WITH ")?;
+        if self.recursive {
+            f.write_str("RECURSIVE ")?;
+        }
+        display_comma_separated(&self.cte_tables).fmt(f)?;
+        Ok(())
     }
 }
 
@@ -592,8 +649,24 @@ pub struct Cte {
 impl fmt::Display for Cte {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.materialized.as_ref() {
-            None => write!(f, "{} AS ({})", self.alias, self.query)?,
-            Some(materialized) => write!(f, "{} AS {materialized} ({})", self.alias, self.query)?,
+            None => {
+                self.alias.fmt(f)?;
+                f.write_str(" AS (")?;
+                NewLine.fmt(f)?;
+                Indent(&self.query).fmt(f)?;
+                NewLine.fmt(f)?;
+                f.write_str(")")?;
+            }
+            Some(materialized) => {
+                self.alias.fmt(f)?;
+                f.write_str(" AS ")?;
+                materialized.fmt(f)?;
+                f.write_str(" (")?;
+                NewLine.fmt(f)?;
+                Indent(&self.query).fmt(f)?;
+                NewLine.fmt(f)?;
+                f.write_str(")")?;
+            }
         };
         if let Some(ref fr) = self.from {
             write!(f, " FROM {fr}")?;
@@ -906,18 +979,21 @@ impl fmt::Display for ReplaceSelectElement {
 
 impl fmt::Display for SelectItem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use core::fmt::Write;
         match &self {
-            SelectItem::UnnamedExpr(expr) => write!(f, "{expr}"),
-            SelectItem::ExprWithAlias { expr, alias } => write!(f, "{expr} AS {alias}"),
+            SelectItem::UnnamedExpr(expr) => expr.fmt(f),
+            SelectItem::ExprWithAlias { expr, alias } => {
+                expr.fmt(f)?;
+                f.write_str(" AS ")?;
+                alias.fmt(f)
+            }
             SelectItem::QualifiedWildcard(kind, additional_options) => {
-                write!(f, "{kind}")?;
-                write!(f, "{additional_options}")?;
-                Ok(())
+                kind.fmt(f)?;
+                additional_options.fmt(f)
             }
             SelectItem::Wildcard(additional_options) => {
-                write!(f, "*")?;
-                write!(f, "{additional_options}")?;
-                Ok(())
+                f.write_char('*')?;
+                additional_options.fmt(f)
             }
         }
     }
@@ -933,9 +1009,10 @@ pub struct TableWithJoins {
 
 impl fmt::Display for TableWithJoins {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.relation)?;
+        self.relation.fmt(f)?;
         for join in &self.joins {
-            write!(f, "{join}")?;
+            SpaceOrNewline.fmt(f)?;
+            join.fmt(f)?;
         }
         Ok(())
     }
@@ -1001,6 +1078,26 @@ impl fmt::Display for ExprWithAlias {
             write!(f, " AS {alias}")?;
         }
         Ok(())
+    }
+}
+
+/// An expression optionally followed by an alias and order by options.
+///
+/// Example:
+/// ```sql
+/// 42 AS myint ASC
+/// ```
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ExprWithAliasAndOrderBy {
+    pub expr: ExprWithAlias,
+    pub order_by: OrderByOptions,
+}
+
+impl fmt::Display for ExprWithAliasAndOrderBy {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}", self.expr, self.order_by)
     }
 }
 
@@ -1245,7 +1342,7 @@ pub enum TableFactor {
     ///
     /// Syntax:
     /// ```sql
-    /// table UNPIVOT(value FOR name IN (column1, [ column2, ... ])) [ alias ]
+    /// table UNPIVOT [ { INCLUDE | EXCLUDE } NULLS ] (value FOR name IN (column1, [ column2, ... ])) [ alias ]
     /// ```
     ///
     /// See <https://docs.snowflake.com/en/sql-reference/constructs/unpivot>.
@@ -1254,6 +1351,7 @@ pub enum TableFactor {
         value: Ident,
         name: Ident,
         columns: Vec<Ident>,
+        null_inclusion: Option<NullInclusion>,
         alias: Option<TableAlias>,
     },
     /// A `MATCH_RECOGNIZE` operation on a table.
@@ -1277,13 +1375,43 @@ pub enum TableFactor {
         symbols: Vec<SymbolDefinition>,
         alias: Option<TableAlias>,
     },
+    /// The `XMLTABLE` table-valued function.
+    /// Part of the SQL standard, supported by PostgreSQL, Oracle, and DB2.
+    ///
+    /// <https://www.postgresql.org/docs/15/functions-xml.html#FUNCTIONS-XML-PROCESSING>
+    ///
+    /// ```sql
+    /// SELECT xmltable.*
+    /// FROM xmldata,
+    /// XMLTABLE('//ROWS/ROW'
+    ///     PASSING data
+    ///     COLUMNS id int PATH '@id',
+    ///     ordinality FOR ORDINALITY,
+    ///     "COUNTRY_NAME" text,
+    ///     country_id text PATH 'COUNTRY_ID',
+    ///     size_sq_km float PATH 'SIZE[@unit = "sq_km"]',
+    ///     size_other text PATH 'concat(SIZE[@unit!="sq_km"], " ", SIZE[@unit!="sq_km"]/@unit)',
+    ///     premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified'
+    /// );
+    /// ````
+    XmlTable {
+        /// Optional XMLNAMESPACES clause (empty if not present)
+        namespaces: Vec<XmlNamespaceDefinition>,
+        /// The row-generating XPath expression.
+        row_expression: Expr,
+        /// The PASSING clause specifying the document expression.
+        passing: XmlPassingClause,
+        /// The columns to be extracted from each generated row.
+        columns: Vec<XmlTableColumn>,
+        /// The alias for the table.
+        alias: Option<TableAlias>,
+    },
 }
 
 /// The table sample modifier options
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
-
 pub enum TableSampleKind {
     /// Table sample located before the table alias option
     BeforeTableAlias(Box<TableSample>),
@@ -1437,7 +1565,7 @@ impl fmt::Display for TableSampleBucket {
 }
 impl fmt::Display for TableSample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, " {}", self.modifier)?;
+        write!(f, "{}", self.modifier)?;
         if let Some(name) = &self.name {
             write!(f, " {}", name)?;
         }
@@ -1718,9 +1846,9 @@ impl fmt::Display for TableFactor {
                 sample,
                 index_hints,
             } => {
-                write!(f, "{name}")?;
+                name.fmt(f)?;
                 if let Some(json_path) = json_path {
-                    write!(f, "{json_path}")?;
+                    json_path.fmt(f)?;
                 }
                 if !partitions.is_empty() {
                     write!(f, "PARTITION ({})", display_comma_separated(partitions))?;
@@ -1740,7 +1868,7 @@ impl fmt::Display for TableFactor {
                     write!(f, " WITH ORDINALITY")?;
                 }
                 if let Some(TableSampleKind::BeforeTableAlias(sample)) = sample {
-                    write!(f, "{sample}")?;
+                    write!(f, " {sample}")?;
                 }
                 if let Some(alias) = alias {
                     write!(f, " AS {alias}")?;
@@ -1755,7 +1883,7 @@ impl fmt::Display for TableFactor {
                     write!(f, "{version}")?;
                 }
                 if let Some(TableSampleKind::AfterTableAlias(sample)) = sample {
-                    write!(f, "{sample}")?;
+                    write!(f, " {sample}")?;
                 }
                 Ok(())
             }
@@ -1767,7 +1895,11 @@ impl fmt::Display for TableFactor {
                 if *lateral {
                     write!(f, "LATERAL ")?;
                 }
-                write!(f, "({subquery})")?;
+                f.write_str("(")?;
+                NewLine.fmt(f)?;
+                Indent(subquery).fmt(f)?;
+                NewLine.fmt(f)?;
+                f.write_str(")")?;
                 if let Some(alias) = alias {
                     write!(f, " AS {alias}")?;
                 }
@@ -1897,15 +2029,19 @@ impl fmt::Display for TableFactor {
             }
             TableFactor::Unpivot {
                 table,
+                null_inclusion,
                 value,
                 name,
                 columns,
                 alias,
             } => {
+                write!(f, "{table} UNPIVOT")?;
+                if let Some(null_inclusion) = null_inclusion {
+                    write!(f, " {null_inclusion} ")?;
+                }
                 write!(
                     f,
-                    "{} UNPIVOT({} FOR {} IN ({}))",
-                    table,
+                    "({} FOR {} IN ({}))",
                     value,
                     name,
                     display_comma_separated(columns)
@@ -1946,6 +2082,31 @@ impl fmt::Display for TableFactor {
                 write!(f, "DEFINE {})", display_comma_separated(symbols))?;
                 if alias.is_some() {
                     write!(f, " AS {}", alias.as_ref().unwrap())?;
+                }
+                Ok(())
+            }
+            TableFactor::XmlTable {
+                row_expression,
+                passing,
+                columns,
+                alias,
+                namespaces,
+            } => {
+                write!(f, "XMLTABLE(")?;
+                if !namespaces.is_empty() {
+                    write!(
+                        f,
+                        "XMLNAMESPACES({}), ",
+                        display_comma_separated(namespaces)
+                    )?;
+                }
+                write!(
+                    f,
+                    "{row_expression}{passing} COLUMNS {columns})",
+                    columns = display_comma_separated(columns)
+                )?;
+                if let Some(alias) = alias {
+                    write!(f, " AS {alias}")?;
                 }
                 Ok(())
             }
@@ -2063,116 +2224,104 @@ impl fmt::Display for Join {
             Suffix(constraint)
         }
         if self.global {
-            write!(f, " GLOBAL")?;
+            write!(f, "GLOBAL ")?;
         }
 
         match &self.join_operator {
-            JoinOperator::Join(constraint) => write!(
-                f,
-                " {}JOIN {}{}",
+            JoinOperator::Join(constraint) => f.write_fmt(format_args!(
+                "{}JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::Inner(constraint) => write!(
-                f,
-                " {}INNER JOIN {}{}",
+            )),
+            JoinOperator::Inner(constraint) => f.write_fmt(format_args!(
+                "{}INNER JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::Left(constraint) => write!(
-                f,
-                " {}LEFT JOIN {}{}",
+            )),
+            JoinOperator::Left(constraint) => f.write_fmt(format_args!(
+                "{}LEFT JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::LeftOuter(constraint) => write!(
-                f,
-                " {}LEFT OUTER JOIN {}{}",
+            )),
+            JoinOperator::LeftOuter(constraint) => f.write_fmt(format_args!(
+                "{}LEFT OUTER JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::Right(constraint) => write!(
-                f,
-                " {}RIGHT JOIN {}{}",
+            )),
+            JoinOperator::Right(constraint) => f.write_fmt(format_args!(
+                "{}RIGHT JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::RightOuter(constraint) => write!(
-                f,
-                " {}RIGHT OUTER JOIN {}{}",
+            )),
+            JoinOperator::RightOuter(constraint) => f.write_fmt(format_args!(
+                "{}RIGHT OUTER JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::FullOuter(constraint) => write!(
-                f,
-                " {}FULL JOIN {}{}",
+            )),
+            JoinOperator::FullOuter(constraint) => f.write_fmt(format_args!(
+                "{}FULL JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::CrossJoin => write!(f, " CROSS JOIN {}", self.relation),
-            JoinOperator::Semi(constraint) => write!(
-                f,
-                " {}SEMI JOIN {}{}",
+            )),
+            JoinOperator::CrossJoin => f.write_fmt(format_args!("CROSS JOIN {}", self.relation)),
+            JoinOperator::Semi(constraint) => f.write_fmt(format_args!(
+                "{}SEMI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::LeftSemi(constraint) => write!(
-                f,
-                " {}LEFT SEMI JOIN {}{}",
+            )),
+            JoinOperator::LeftSemi(constraint) => f.write_fmt(format_args!(
+                "{}LEFT SEMI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::RightSemi(constraint) => write!(
-                f,
-                " {}RIGHT SEMI JOIN {}{}",
+            )),
+            JoinOperator::RightSemi(constraint) => f.write_fmt(format_args!(
+                "{}RIGHT SEMI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::Anti(constraint) => write!(
-                f,
-                " {}ANTI JOIN {}{}",
+            )),
+            JoinOperator::Anti(constraint) => f.write_fmt(format_args!(
+                "{}ANTI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::LeftAnti(constraint) => write!(
-                f,
-                " {}LEFT ANTI JOIN {}{}",
+            )),
+            JoinOperator::LeftAnti(constraint) => f.write_fmt(format_args!(
+                "{}LEFT ANTI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::RightAnti(constraint) => write!(
-                f,
-                " {}RIGHT ANTI JOIN {}{}",
+            )),
+            JoinOperator::RightAnti(constraint) => f.write_fmt(format_args!(
+                "{}RIGHT ANTI JOIN {}{}",
                 prefix(constraint),
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::CrossApply => write!(f, " CROSS APPLY {}", self.relation),
-            JoinOperator::OuterApply => write!(f, " OUTER APPLY {}", self.relation),
+            )),
+            JoinOperator::CrossApply => f.write_fmt(format_args!("CROSS APPLY {}", self.relation)),
+            JoinOperator::OuterApply => f.write_fmt(format_args!("OUTER APPLY {}", self.relation)),
             JoinOperator::AsOf {
                 match_condition,
                 constraint,
-            } => write!(
-                f,
-                " ASOF JOIN {} MATCH_CONDITION ({match_condition}){}",
+            } => f.write_fmt(format_args!(
+                "ASOF JOIN {} MATCH_CONDITION ({match_condition}){}",
                 self.relation,
                 suffix(constraint)
-            ),
-            JoinOperator::StraightJoin(constraint) => {
-                write!(f, " STRAIGHT_JOIN {}{}", self.relation, suffix(constraint))
-            }
+            )),
+            JoinOperator::StraightJoin(constraint) => f.write_fmt(format_args!(
+                "STRAIGHT_JOIN {}{}",
+                self.relation,
+                suffix(constraint)
+            )),
         }
     }
 }
@@ -2470,6 +2619,143 @@ impl fmt::Display for OffsetRows {
     }
 }
 
+/// Pipe syntax, first introduced in Google BigQuery.
+/// Example:
+///
+/// ```sql
+/// FROM Produce
+/// |> WHERE sales > 0
+/// |> AGGREGATE SUM(sales) AS total_sales, COUNT(*) AS num_sales
+///    GROUP BY item;
+/// ```
+///
+/// See <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#pipe_syntax>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum PipeOperator {
+    /// Limits the number of rows to return in a query, with an optional OFFSET clause to skip over rows.
+    ///
+    /// Syntax: `|> LIMIT <n> [OFFSET <m>]`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#limit_pipe_operator>
+    Limit { expr: Expr, offset: Option<Expr> },
+    /// Filters the results of the input table.
+    ///
+    /// Syntax: `|> WHERE <condition>`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#where_pipe_operator>
+    Where { expr: Expr },
+    /// `ORDER BY <expr> [ASC|DESC], ...`
+    OrderBy { exprs: Vec<OrderByExpr> },
+    /// Produces a new table with the listed columns, similar to the outermost SELECT clause in a table subquery in standard syntax.
+    ///
+    /// Syntax `|> SELECT <expr> [[AS] alias], ...`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#select_pipe_operator>
+    Select { exprs: Vec<SelectItem> },
+    /// Propagates the existing table and adds computed columns, similar to SELECT *, new_column in standard syntax.
+    ///
+    /// Syntax: `|> EXTEND <expr> [[AS] alias], ...`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#extend_pipe_operator>
+    Extend { exprs: Vec<SelectItem> },
+    /// Replaces the value of a column in the current table, similar to SELECT * REPLACE (expression AS column) in standard syntax.
+    ///
+    /// Syntax: `|> SET <column> = <expression>, ...`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#set_pipe_operator>
+    Set { assignments: Vec<Assignment> },
+    /// Removes listed columns from the current table, similar to SELECT * EXCEPT (column) in standard syntax.
+    ///
+    /// Syntax: `|> DROP <column>, ...`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#drop_pipe_operator>
+    Drop { columns: Vec<Ident> },
+    /// Introduces a table alias for the input table, similar to applying the AS alias clause on a table subquery in standard syntax.
+    ///
+    /// Syntax: `|> AS <alias>`
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#as_pipe_operator>
+    As { alias: Ident },
+    /// Performs aggregation on data across grouped rows or an entire table.
+    ///
+    /// Syntax: `|> AGGREGATE <agg_expr> [[AS] alias], ...`
+    ///
+    /// Syntax:
+    /// ```norust
+    /// |> AGGREGATE [<agg_expr> [[AS] alias], ...]
+    /// GROUP BY <grouping_expr> [AS alias], ...
+    /// ```
+    ///
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#aggregate_pipe_operator>
+    Aggregate {
+        full_table_exprs: Vec<ExprWithAliasAndOrderBy>,
+        group_by_expr: Vec<ExprWithAliasAndOrderBy>,
+    },
+    /// Selects a random sample of rows from the input table.
+    /// Syntax: `|> TABLESAMPLE SYSTEM (10 PERCENT)
+    /// See more at <https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#tablesample_pipe_operator>
+    TableSample { sample: Box<TableSample> },
+}
+
+impl fmt::Display for PipeOperator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PipeOperator::Select { exprs } => {
+                write!(f, "SELECT {}", display_comma_separated(exprs.as_slice()))
+            }
+            PipeOperator::Extend { exprs } => {
+                write!(f, "EXTEND {}", display_comma_separated(exprs.as_slice()))
+            }
+            PipeOperator::Set { assignments } => {
+                write!(f, "SET {}", display_comma_separated(assignments.as_slice()))
+            }
+            PipeOperator::Drop { columns } => {
+                write!(f, "DROP {}", display_comma_separated(columns.as_slice()))
+            }
+            PipeOperator::As { alias } => {
+                write!(f, "AS {}", alias)
+            }
+            PipeOperator::Limit { expr, offset } => {
+                write!(f, "LIMIT {}", expr)?;
+                if let Some(offset) = offset {
+                    write!(f, " OFFSET {}", offset)?;
+                }
+                Ok(())
+            }
+            PipeOperator::Aggregate {
+                full_table_exprs,
+                group_by_expr,
+            } => {
+                write!(f, "AGGREGATE")?;
+                if !full_table_exprs.is_empty() {
+                    write!(
+                        f,
+                        " {}",
+                        display_comma_separated(full_table_exprs.as_slice())
+                    )?;
+                }
+                if !group_by_expr.is_empty() {
+                    write!(f, " GROUP BY {}", display_comma_separated(group_by_expr))?;
+                }
+                Ok(())
+            }
+
+            PipeOperator::Where { expr } => {
+                write!(f, "WHERE {}", expr)
+            }
+            PipeOperator::OrderBy { exprs } => {
+                write!(f, "ORDER BY {}", display_comma_separated(exprs.as_slice()))
+            }
+
+            PipeOperator::TableSample { sample } => {
+                write!(f, "{}", sample)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
@@ -2623,13 +2909,14 @@ pub struct Values {
 
 impl fmt::Display for Values {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VALUES ")?;
+        f.write_str("VALUES")?;
         let prefix = if self.explicit_row { "ROW" } else { "" };
         let mut delim = "";
         for row in &self.rows {
-            write!(f, "{delim}")?;
-            delim = ", ";
-            write!(f, "{prefix}({})", display_comma_separated(row))?;
+            f.write_str(delim)?;
+            delim = ",";
+            SpaceOrNewline.fmt(f)?;
+            Indent(format_args!("{prefix}({})", display_comma_separated(row))).fmt(f)?;
         }
         Ok(())
     }
@@ -2716,8 +3003,9 @@ impl fmt::Display for GroupByExpr {
                 Ok(())
             }
             GroupByExpr::Expressions(col_names, modifiers) => {
-                let col_names = display_comma_separated(col_names);
-                write!(f, "GROUP BY {col_names}")?;
+                f.write_str("GROUP BY")?;
+                SpaceOrNewline.fmt(f)?;
+                Indent(display_comma_separated(col_names)).fmt(f)?;
                 if !modifiers.is_empty() {
                     write!(f, " {}", display_separated(modifiers, " "))?;
                 }
@@ -3063,15 +3351,19 @@ impl fmt::Display for OpenJsonTableColumn {
 }
 
 /// BigQuery supports ValueTables which have 2 modes:
-/// `SELECT AS STRUCT`
-/// `SELECT AS VALUE`
+/// `SELECT [ALL | DISTINCT] AS STRUCT`
+/// `SELECT [ALL | DISTINCT] AS VALUE`
+///
 /// <https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#value_tables>
+/// <https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#select_list>
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum ValueTableMode {
     AsStruct,
     AsValue,
+    DistinctAsStruct,
+    DistinctAsValue,
 }
 
 impl fmt::Display for ValueTableMode {
@@ -3079,6 +3371,8 @@ impl fmt::Display for ValueTableMode {
         match self {
             ValueTableMode::AsStruct => write!(f, "AS STRUCT"),
             ValueTableMode::AsValue => write!(f, "AS VALUE"),
+            ValueTableMode::DistinctAsStruct => write!(f, "DISTINCT AS STRUCT"),
+            ValueTableMode::DistinctAsValue => write!(f, "DISTINCT AS VALUE"),
         }
     }
 }
@@ -3094,4 +3388,134 @@ pub enum UpdateTableFromKind {
     /// Update Statement where the 'FROM' clause is after the 'SET' keyword (Which is the standard way)
     /// For Example: `UPDATE SET t1.name='aaa' FROM t1`
     AfterSet(Vec<TableWithJoins>),
+}
+
+/// Defines the options for an XmlTable column: Named or ForOrdinality
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum XmlTableColumnOption {
+    /// A named column with a type, optional path, and default value.
+    NamedInfo {
+        /// The type of the column to be extracted.
+        r#type: DataType,
+        /// The path to the column to be extracted. If None, defaults to the column name.
+        path: Option<Expr>,
+        /// Default value if path does not match
+        default: Option<Expr>,
+        /// Whether the column is nullable (NULL=true, NOT NULL=false)
+        nullable: bool,
+    },
+    /// The FOR ORDINALITY marker
+    ForOrdinality,
+}
+
+/// A single column definition in XMLTABLE
+///
+/// ```sql
+/// COLUMNS
+///     id int PATH '@id',
+///     ordinality FOR ORDINALITY,
+///     "COUNTRY_NAME" text,
+///     country_id text PATH 'COUNTRY_ID',
+///     size_sq_km float PATH 'SIZE[@unit = "sq_km"]',
+///     size_other text PATH 'concat(SIZE[@unit!="sq_km"], " ", SIZE[@unit!="sq_km"]/@unit)',
+///     premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified'
+/// ```
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct XmlTableColumn {
+    /// The name of the column.
+    pub name: Ident,
+    /// Column options: type/path/default or FOR ORDINALITY
+    pub option: XmlTableColumnOption,
+}
+
+impl fmt::Display for XmlTableColumn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        match &self.option {
+            XmlTableColumnOption::NamedInfo {
+                r#type,
+                path,
+                default,
+                nullable,
+            } => {
+                write!(f, " {}", r#type)?;
+                if let Some(p) = path {
+                    write!(f, " PATH {}", p)?;
+                }
+                if let Some(d) = default {
+                    write!(f, " DEFAULT {}", d)?;
+                }
+                if !*nullable {
+                    write!(f, " NOT NULL")?;
+                }
+                Ok(())
+            }
+            XmlTableColumnOption::ForOrdinality => {
+                write!(f, " FOR ORDINALITY")
+            }
+        }
+    }
+}
+
+/// Argument passed in the XMLTABLE PASSING clause
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct XmlPassingArgument {
+    pub expr: Expr,
+    pub alias: Option<Ident>,
+    pub by_value: bool, // True if BY VALUE is specified
+}
+
+impl fmt::Display for XmlPassingArgument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.by_value {
+            write!(f, "BY VALUE ")?;
+        }
+        write!(f, "{}", self.expr)?;
+        if let Some(alias) = &self.alias {
+            write!(f, " AS {}", alias)?;
+        }
+        Ok(())
+    }
+}
+
+/// The PASSING clause for XMLTABLE
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct XmlPassingClause {
+    pub arguments: Vec<XmlPassingArgument>,
+}
+
+impl fmt::Display for XmlPassingClause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.arguments.is_empty() {
+            write!(f, " PASSING {}", display_comma_separated(&self.arguments))?;
+        }
+        Ok(())
+    }
+}
+
+/// Represents a single XML namespace definition in the XMLNAMESPACES clause.
+///
+/// `namespace_uri AS namespace_name`
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct XmlNamespaceDefinition {
+    /// The namespace URI (a text expression).
+    pub uri: Expr,
+    /// The alias for the namespace (a simple identifier).
+    pub name: Ident,
+}
+
+impl fmt::Display for XmlNamespaceDefinition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} AS {}", self.uri, self.name)
+    }
 }

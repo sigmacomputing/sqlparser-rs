@@ -39,6 +39,29 @@ use crate::ast::{
 use crate::keywords::Keyword;
 use crate::tokenizer::Token;
 
+/// ALTER TABLE operation REPLICA IDENTITY values
+/// See [Postgres ALTER TABLE docs](https://www.postgresql.org/docs/current/sql-altertable.html)
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum ReplicaIdentity {
+    None,
+    Full,
+    Default,
+    Index(Ident),
+}
+
+impl fmt::Display for ReplicaIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ReplicaIdentity::None => f.write_str("NONE"),
+            ReplicaIdentity::Full => f.write_str("FULL"),
+            ReplicaIdentity::Default => f.write_str("DEFAULT"),
+            ReplicaIdentity::Index(idx) => write!(f, "USING INDEX {}", idx),
+        }
+    }
+}
+
 /// An `ALTER TABLE` (`Statement::AlterTable`) operation
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -116,6 +139,7 @@ pub enum AlterTableOperation {
     },
     /// `DROP [ COLUMN ] [ IF EXISTS ] <column_name> [ CASCADE ]`
     DropColumn {
+        has_column_keyword: bool,
         column_name: Ident,
         if_exists: bool,
         drop_behavior: Option<DropBehavior>,
@@ -163,6 +187,12 @@ pub enum AlterTableOperation {
     DropForeignKey {
         name: Ident,
     },
+    /// `DROP INDEX <index_name>`
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/alter-table.html
+    DropIndex {
+        name: Ident,
+    },
     /// `ENABLE ALWAYS RULE rewrite_rule_name`
     ///
     /// Note: this is a PostgreSQL-specific operation.
@@ -207,6 +237,13 @@ pub enum AlterTableOperation {
     RenamePartitions {
         old_partitions: Vec<Expr>,
         new_partitions: Vec<Expr>,
+    },
+    /// REPLICA IDENTITY { DEFAULT | USING INDEX index_name | FULL | NOTHING }
+    ///
+    /// Note: this is a PostgreSQL-specific operation.
+    /// Please refer to [PostgreSQL documentation](https://www.postgresql.org/docs/current/sql-altertable.html)
+    ReplicaIdentity {
+        identity: ReplicaIdentity,
     },
     /// Add Partitions
     AddPartitions {
@@ -575,13 +612,16 @@ impl fmt::Display for AlterTableOperation {
             }
             AlterTableOperation::DropPrimaryKey => write!(f, "DROP PRIMARY KEY"),
             AlterTableOperation::DropForeignKey { name } => write!(f, "DROP FOREIGN KEY {name}"),
+            AlterTableOperation::DropIndex { name } => write!(f, "DROP INDEX {name}"),
             AlterTableOperation::DropColumn {
+                has_column_keyword,
                 column_name,
                 if_exists,
                 drop_behavior,
             } => write!(
                 f,
-                "DROP COLUMN {}{}{}",
+                "DROP {}{}{}{}",
+                if *has_column_keyword { "COLUMN " } else { "" },
                 if *if_exists { "IF EXISTS " } else { "" },
                 column_name,
                 match drop_behavior {
@@ -728,6 +768,9 @@ impl fmt::Display for AlterTableOperation {
             }
             AlterTableOperation::Lock { equals, lock } => {
                 write!(f, "LOCK {}{}", if *equals { "= " } else { "" }, lock)
+            }
+            AlterTableOperation::ReplicaIdentity { identity } => {
+                write!(f, "REPLICA IDENTITY {identity}")
             }
         }
     }
@@ -983,6 +1026,9 @@ pub enum TableConstraint {
     /// }`).
     ForeignKey {
         name: Option<Ident>,
+        /// MySQL-specific field
+        /// <https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html>
+        index_name: Option<Ident>,
         columns: Vec<Ident>,
         foreign_table: ObjectName,
         referred_columns: Vec<Ident>,
@@ -990,10 +1036,13 @@ pub enum TableConstraint {
         on_update: Option<ReferentialAction>,
         characteristics: Option<ConstraintCharacteristics>,
     },
-    /// `[ CONSTRAINT <name> ] CHECK (<expr>)`
+    /// `[ CONSTRAINT <name> ] CHECK (<expr>) [[NOT] ENFORCED]`
     Check {
         name: Option<Ident>,
         expr: Box<Expr>,
+        /// MySQL-specific syntax
+        /// <https://dev.mysql.com/doc/refman/8.4/en/create-table.html>
+        enforced: Option<bool>,
     },
     /// MySQLs [index definition][1] for index creation. Not present on ANSI so, for now, the usage
     /// is restricted to MySQL, as no other dialects that support this syntax were found.
@@ -1093,6 +1142,7 @@ impl fmt::Display for TableConstraint {
             }
             TableConstraint::ForeignKey {
                 name,
+                index_name,
                 columns,
                 foreign_table,
                 referred_columns,
@@ -1102,8 +1152,9 @@ impl fmt::Display for TableConstraint {
             } => {
                 write!(
                     f,
-                    "{}FOREIGN KEY ({}) REFERENCES {}",
+                    "{}FOREIGN KEY{} ({}) REFERENCES {}",
                     display_constraint_name(name),
+                    display_option_spaced(index_name),
                     display_comma_separated(columns),
                     foreign_table,
                 )?;
@@ -1121,8 +1172,17 @@ impl fmt::Display for TableConstraint {
                 }
                 Ok(())
             }
-            TableConstraint::Check { name, expr } => {
-                write!(f, "{}CHECK ({})", display_constraint_name(name), expr)
+            TableConstraint::Check {
+                name,
+                expr,
+                enforced,
+            } => {
+                write!(f, "{}CHECK ({})", display_constraint_name(name), expr)?;
+                if let Some(b) = enforced {
+                    write!(f, " {}", if *b { "ENFORCED" } else { "NOT ENFORCED" })
+                } else {
+                    Ok(())
+                }
             }
             TableConstraint::Index {
                 display_as_key,
@@ -1725,6 +1785,13 @@ pub enum ColumnOption {
     /// ```
     /// [Snowflake]: https://docs.snowflake.com/en/sql-reference/sql/create-table
     Tags(TagsColumnOption),
+    /// MySQL specific: Spatial reference identifier
+    /// Syntax:
+    /// ```sql
+    /// CREATE TABLE geom (g GEOMETRY NOT NULL SRID 4326);
+    /// ```
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/creating-spatial-indexes.html
+    Srid(Box<Expr>),
 }
 
 impl fmt::Display for ColumnOption {
@@ -1839,6 +1906,9 @@ impl fmt::Display for ColumnOption {
             }
             Tags(tags) => {
                 write!(f, "{tags}")
+            }
+            Srid(srid) => {
+                write!(f, "SRID {srid}")
             }
         }
     }
@@ -2156,7 +2226,60 @@ impl fmt::Display for ClusteredBy {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// ```sql
+/// CREATE DOMAIN name [ AS ] data_type
+///         [ COLLATE collation ]
+///         [ DEFAULT expression ]
+///         [ domain_constraint [ ... ] ]
+///
+///     where domain_constraint is:
+///
+///     [ CONSTRAINT constraint_name ]
+///     { NOT NULL | NULL | CHECK (expression) }
+/// ```
+/// See [PostgreSQL](https://www.postgresql.org/docs/current/sql-createdomain.html)
+pub struct CreateDomain {
+    /// The name of the domain to be created.
+    pub name: ObjectName,
+    /// The data type of the domain.
+    pub data_type: DataType,
+    /// The collation of the domain.
+    pub collation: Option<Ident>,
+    /// The default value of the domain.
+    pub default: Option<Expr>,
+    /// The constraints of the domain.
+    pub constraints: Vec<TableConstraint>,
+}
+
+impl fmt::Display for CreateDomain {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "CREATE DOMAIN {name} AS {data_type}",
+            name = self.name,
+            data_type = self.data_type
+        )?;
+        if let Some(collation) = &self.collation {
+            write!(f, " COLLATE {collation}")?;
+        }
+        if let Some(default) = &self.default {
+            write!(f, " DEFAULT {default}")?;
+        }
+        if !self.constraints.is_empty() {
+            write!(f, " {}", display_separated(&self.constraints, " "))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct CreateFunction {
+    /// True if this is a `CREATE OR ALTER FUNCTION` statement
+    ///
+    /// [MsSql](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-function-transact-sql?view=sql-server-ver16#or-alter)
+    pub or_alter: bool,
     pub or_replace: bool,
     pub temporary: bool,
     pub if_not_exists: bool,
@@ -2219,9 +2342,10 @@ impl fmt::Display for CreateFunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "CREATE {or_replace}{temp}FUNCTION {if_not_exists}{name}",
+            "CREATE {or_alter}{or_replace}{temp}FUNCTION {if_not_exists}{name}",
             name = self.name,
             temp = if self.temporary { "TEMPORARY " } else { "" },
+            or_alter = if self.or_alter { "OR ALTER " } else { "" },
             or_replace = if self.or_replace { "OR REPLACE " } else { "" },
             if_not_exists = if self.if_not_exists {
                 "IF NOT EXISTS "
@@ -2259,6 +2383,12 @@ impl fmt::Display for CreateFunction {
         if let Some(CreateFunctionBody::Return(function_body)) = &self.function_body {
             write!(f, " RETURN {function_body}")?;
         }
+        if let Some(CreateFunctionBody::AsReturnExpr(function_body)) = &self.function_body {
+            write!(f, " AS RETURN {function_body}")?;
+        }
+        if let Some(CreateFunctionBody::AsReturnSelect(function_body)) = &self.function_body {
+            write!(f, " AS RETURN {function_body}")?;
+        }
         if let Some(using) = &self.using {
             write!(f, " {using}")?;
         }
@@ -2271,6 +2401,9 @@ impl fmt::Display for CreateFunction {
         }
         if let Some(CreateFunctionBody::AsAfterOptions(function_body)) = &self.function_body {
             write!(f, " AS {function_body}")?;
+        }
+        if let Some(CreateFunctionBody::AsBeginEnd(bes)) = &self.function_body {
+            write!(f, " AS {bes}")?;
         }
         Ok(())
     }

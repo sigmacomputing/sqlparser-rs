@@ -25,7 +25,7 @@ use sqlparser::ast::{
     Expr, Function, FunctionArgumentList, FunctionArguments, Ident, ObjectName, OrderByExpr,
     OrderByOptions, SelectItem, Set, Statement, TableFactor, UnaryOperator, Use, Value,
 };
-use sqlparser::dialect::{GenericDialect, HiveDialect, MsSqlDialect};
+use sqlparser::dialect::{AnsiDialect, GenericDialect, HiveDialect};
 use sqlparser::parser::ParserError;
 use sqlparser::test_utils::*;
 
@@ -133,9 +133,7 @@ fn create_table_with_comment() {
         Statement::CreateTable(CreateTable { comment, .. }) => {
             assert_eq!(
                 comment,
-                Some(CommentDef::AfterColumnDefsWithoutEq(
-                    "table comment".to_string()
-                ))
+                Some(CommentDef::WithoutEq("table comment".to_string()))
             )
         }
         _ => unreachable!(),
@@ -343,6 +341,9 @@ fn lateral_view() {
 fn sort_by() {
     let sort_by = "SELECT * FROM db.table SORT BY a";
     hive().verified_stmt(sort_by);
+
+    let sort_by_with_direction = "SELECT * FROM db.table SORT BY a, b DESC";
+    hive().verified_stmt(sort_by_with_direction);
 }
 
 #[test]
@@ -423,7 +424,7 @@ fn parse_create_function() {
     }
 
     // Test error in dialect that doesn't support parsing CREATE FUNCTION
-    let unsupported_dialects = TestedDialects::new(vec![Box::new(MsSqlDialect {})]);
+    let unsupported_dialects = TestedDialects::new(vec![Box::new(AnsiDialect {})]);
 
     assert_eq!(
         unsupported_dialects.parse_sql_statements(sql).unwrap_err(),
