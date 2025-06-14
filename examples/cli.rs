@@ -48,6 +48,7 @@ $ cargo run --example cli - [--dialectname]
 
     let dialect: Box<dyn Dialect> = match std::env::args().nth(2).unwrap_or_default().as_ref() {
         "--ansi" => Box::new(AnsiDialect {}),
+        "--databricks" => Box::new(DatabricksDialect {}),
         "--bigquery" => Box::new(BigQueryDialect {}),
         "--postgres" => Box::new(PostgreSqlDialect {}),
         "--ms" => Box::new(MsSqlDialect {}),

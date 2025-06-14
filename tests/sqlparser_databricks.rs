@@ -360,3 +360,100 @@ fn data_type_timestamp_ntz() {
         s => panic!("Unexpected statement: {:?}", s),
     }
 }
+
+#[test]
+fn parse_semi_structured_data_traversal() {
+    // basic case
+    let sql = "SELECT a:b.c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // brackets
+    let sql = "SELECT a:b['c'][0] FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::value(Value::SingleQuotedString("c".to_owned()))
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::value(number("0"))
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // asterisk for arrays
+    let sql = "SELECT a:['b'].c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::value(Value::SingleQuotedString("b".to_owned())),
+                    },
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // asterisk for arrays
+    let sql = "SELECT a:b[*].c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::AllElements,
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+}
