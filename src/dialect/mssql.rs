@@ -16,7 +16,10 @@
 // under the License.
 
 use crate::ast::helpers::attached_token::AttachedToken;
-use crate::ast::{ConditionalStatementBlock, ConditionalStatements, IfStatement, Statement};
+use crate::ast::{
+    BeginEndStatements, ConditionalStatementBlock, ConditionalStatements, GranteesType,
+    IfStatement, Statement, TriggerObject,
+};
 use crate::dialect::Dialect;
 use crate::keywords::{self, Keyword};
 use crate::parser::{Parser, ParserError};
@@ -47,6 +50,10 @@ impl Dialect for MsSqlDialect {
             || ch == '$'
             || ch == '#'
             || ch == '_'
+    }
+
+    fn identifier_quote_style(&self, _identifier: &str) -> Option<char> {
+        Some('[')
     }
 
     /// SQL Server has `CONVERT(type, value)` instead of `CONVERT(value, type)`
@@ -116,6 +123,11 @@ impl Dialect for MsSqlDialect {
         true
     }
 
+    /// See <https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/server-level-roles>
+    fn get_reserved_grantees_types(&self) -> &[GranteesType] {
+        &[GranteesType::Public]
+    }
+
     fn is_column_alias(&self, kw: &Keyword, _parser: &mut Parser) -> bool {
         !keywords::RESERVED_FOR_COLUMN_ALIAS.contains(kw) && !RESERVED_FOR_COLUMN_ALIAS.contains(kw)
     }
@@ -123,6 +135,15 @@ impl Dialect for MsSqlDialect {
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         if parser.peek_keyword(Keyword::IF) {
             Some(self.parse_if_stmt(parser))
+        } else if parser.parse_keywords(&[Keyword::CREATE, Keyword::TRIGGER]) {
+            Some(self.parse_create_trigger(parser, false))
+        } else if parser.parse_keywords(&[
+            Keyword::CREATE,
+            Keyword::OR,
+            Keyword::ALTER,
+            Keyword::TRIGGER,
+        ]) {
+            Some(self.parse_create_trigger(parser, true))
         } else {
             None
         }
@@ -149,11 +170,11 @@ impl MsSqlDialect {
                 start_token: AttachedToken(if_token),
                 condition: Some(condition),
                 then_token: None,
-                conditional_statements: ConditionalStatements::BeginEnd {
+                conditional_statements: ConditionalStatements::BeginEnd(BeginEndStatements {
                     begin_token: AttachedToken(begin_token),
                     statements,
                     end_token: AttachedToken(end_token),
-                },
+                }),
             }
         } else {
             let stmt = parser.parse_statement()?;
@@ -167,8 +188,10 @@ impl MsSqlDialect {
             }
         };
 
+        let mut prior_statement_ended_with_semi_colon = false;
         while let Token::SemiColon = parser.peek_token_ref().token {
             parser.advance_token();
+            prior_statement_ended_with_semi_colon = true;
         }
 
         let mut else_block = None;
@@ -182,11 +205,11 @@ impl MsSqlDialect {
                     start_token: AttachedToken(else_token),
                     condition: None,
                     then_token: None,
-                    conditional_statements: ConditionalStatements::BeginEnd {
+                    conditional_statements: ConditionalStatements::BeginEnd(BeginEndStatements {
                         begin_token: AttachedToken(begin_token),
                         statements,
                         end_token: AttachedToken(end_token),
-                    },
+                    }),
                 });
             } else {
                 let stmt = parser.parse_statement()?;
@@ -199,6 +222,8 @@ impl MsSqlDialect {
                     },
                 });
             }
+        } else if prior_statement_ended_with_semi_colon {
+            parser.prev_token();
         }
 
         Ok(Statement::If(IfStatement {
@@ -207,6 +232,42 @@ impl MsSqlDialect {
             elseif_blocks: Vec::new(),
             end_token: None,
         }))
+    }
+
+    /// Parse `CREATE TRIGGER` for [MsSql]
+    ///
+    /// [MsSql]: https://learn.microsoft.com/en-us/sql/t-sql/statements/create-trigger-transact-sql
+    fn parse_create_trigger(
+        &self,
+        parser: &mut Parser,
+        or_alter: bool,
+    ) -> Result<Statement, ParserError> {
+        let name = parser.parse_object_name(false)?;
+        parser.expect_keyword_is(Keyword::ON)?;
+        let table_name = parser.parse_object_name(false)?;
+        let period = parser.parse_trigger_period()?;
+        let events = parser.parse_comma_separated(Parser::parse_trigger_event)?;
+
+        parser.expect_keyword_is(Keyword::AS)?;
+        let statements = Some(parser.parse_conditional_statements(&[Keyword::END])?);
+
+        Ok(Statement::CreateTrigger {
+            or_alter,
+            or_replace: false,
+            is_constraint: false,
+            name,
+            period,
+            events,
+            table_name,
+            referenced_table_name: None,
+            referencing: Vec::new(),
+            trigger_object: TriggerObject::Statement,
+            include_each: false,
+            condition: None,
+            exec_body: None,
+            statements,
+            characteristics: None,
+        })
     }
 
     /// Parse a sequence of statements, optionally separated by semicolon.

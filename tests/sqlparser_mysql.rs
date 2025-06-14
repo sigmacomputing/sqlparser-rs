@@ -848,9 +848,23 @@ fn parse_create_table_comment() {
 
     for sql in [without_equal, with_equal] {
         match mysql().verified_stmt(sql) {
-            Statement::CreateTable(CreateTable { name, comment, .. }) => {
+            Statement::CreateTable(CreateTable {
+                name,
+                table_options,
+                ..
+            }) => {
                 assert_eq!(name.to_string(), "foo");
-                assert_eq!(comment.expect("Should exist").to_string(), "baz");
+
+                let plain_options = match table_options {
+                    CreateTableOptions::Plain(options) => options,
+                    _ => unreachable!(),
+                };
+                let comment = match plain_options.first().unwrap() {
+                    SqlOption::Comment(CommentDef::WithEq(c))
+                    | SqlOption::Comment(CommentDef::WithoutEq(c)) => c,
+                    _ => unreachable!(),
+                };
+                assert_eq!(comment, "baz");
             }
             _ => unreachable!(),
         }
@@ -859,26 +873,223 @@ fn parse_create_table_comment() {
 
 #[test]
 fn parse_create_table_auto_increment_offset() {
-    let canonical =
-        "CREATE TABLE foo (bar INT NOT NULL AUTO_INCREMENT) ENGINE=InnoDB AUTO_INCREMENT 123";
-    let with_equal =
-        "CREATE TABLE foo (bar INT NOT NULL AUTO_INCREMENT) ENGINE=InnoDB AUTO_INCREMENT=123";
+    let sql =
+        "CREATE TABLE foo (bar INT NOT NULL AUTO_INCREMENT) ENGINE = InnoDB AUTO_INCREMENT = 123";
 
-    for sql in [canonical, with_equal] {
-        match mysql().one_statement_parses_to(sql, canonical) {
+    match mysql().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable {
+            name,
+            table_options,
+            ..
+        }) => {
+            assert_eq!(name.to_string(), "foo");
+
+            let plain_options = match table_options {
+                CreateTableOptions::Plain(options) => options,
+                _ => unreachable!(),
+            };
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("AUTO_INCREMENT"),
+                value: Expr::Value(test_utils::number("123").with_empty_span())
+            }));
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_create_table_multiple_options_order_independent() {
+    let sql1 = "CREATE TABLE mytable (id INT) ENGINE=InnoDB ROW_FORMAT=DYNAMIC KEY_BLOCK_SIZE=8 COMMENT='abc'";
+    let sql2 = "CREATE TABLE mytable (id INT) KEY_BLOCK_SIZE=8 COMMENT='abc' ENGINE=InnoDB ROW_FORMAT=DYNAMIC";
+    let sql3 = "CREATE TABLE mytable (id INT) ROW_FORMAT=DYNAMIC KEY_BLOCK_SIZE=8 COMMENT='abc' ENGINE=InnoDB";
+
+    for sql in [sql1, sql2, sql3] {
+        match mysql().parse_sql_statements(sql).unwrap().pop().unwrap() {
             Statement::CreateTable(CreateTable {
                 name,
-                auto_increment_offset,
+                table_options,
                 ..
             }) => {
-                assert_eq!(name.to_string(), "foo");
-                assert_eq!(
-                    auto_increment_offset.expect("Should exist").to_string(),
-                    "123"
-                );
+                assert_eq!(name.to_string(), "mytable");
+
+                let plain_options = match table_options {
+                    CreateTableOptions::Plain(options) => options,
+                    _ => unreachable!(),
+                };
+
+                assert!(plain_options.contains(&SqlOption::NamedParenthesizedList(
+                    NamedParenthesizedList {
+                        key: Ident::new("ENGINE"),
+                        name: Some(Ident::new("InnoDB")),
+                        values: vec![]
+                    }
+                )));
+
+                assert!(plain_options.contains(&SqlOption::KeyValue {
+                    key: Ident::new("KEY_BLOCK_SIZE"),
+                    value: Expr::Value(test_utils::number("8").with_empty_span())
+                }));
+
+                assert!(plain_options
+                    .contains(&SqlOption::Comment(CommentDef::WithEq("abc".to_owned()))));
+
+                assert!(plain_options.contains(&SqlOption::KeyValue {
+                    key: Ident::new("ROW_FORMAT"),
+                    value: Expr::Identifier(Ident::new("DYNAMIC".to_owned()))
+                }));
             }
             _ => unreachable!(),
         }
+    }
+}
+
+#[test]
+fn parse_create_table_with_all_table_options() {
+    let sql =
+        "CREATE TABLE foo (bar INT NOT NULL AUTO_INCREMENT) ENGINE = InnoDB AUTO_INCREMENT = 123 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci INSERT_METHOD = FIRST KEY_BLOCK_SIZE = 8 ROW_FORMAT = DYNAMIC DATA DIRECTORY = '/var/lib/mysql/data' INDEX DIRECTORY = '/var/lib/mysql/index' PACK_KEYS = 1 STATS_AUTO_RECALC = 1 STATS_PERSISTENT = 0 STATS_SAMPLE_PAGES = 128 DELAY_KEY_WRITE = 1 COMPRESSION = 'ZLIB' ENCRYPTION = 'Y' MAX_ROWS = 10000 MIN_ROWS = 10 AUTOEXTEND_SIZE = 64 AVG_ROW_LENGTH = 128 CHECKSUM = 1 CONNECTION = 'mysql://localhost' ENGINE_ATTRIBUTE = 'primary' PASSWORD = 'secure_password' SECONDARY_ENGINE_ATTRIBUTE = 'secondary_attr' START TRANSACTION TABLESPACE my_tablespace STORAGE DISK UNION = (table1, table2, table3)";
+
+    match mysql().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable {
+            name,
+            table_options,
+            ..
+        }) => {
+            assert_eq!(name, vec![Ident::new("foo".to_owned())].into());
+
+            let plain_options = match table_options {
+                CreateTableOptions::Plain(options) => options,
+                _ => unreachable!(),
+            };
+
+            assert!(plain_options.contains(&SqlOption::NamedParenthesizedList(
+                NamedParenthesizedList {
+                    key: Ident::new("ENGINE"),
+                    name: Some(Ident::new("InnoDB")),
+                    values: vec![]
+                }
+            )));
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("COLLATE"),
+                value: Expr::Identifier(Ident::new("utf8mb4_0900_ai_ci".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("DEFAULT CHARSET"),
+                value: Expr::Identifier(Ident::new("utf8mb4".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("AUTO_INCREMENT"),
+                value: Expr::value(test_utils::number("123"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("KEY_BLOCK_SIZE"),
+                value: Expr::value(test_utils::number("8"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("ROW_FORMAT"),
+                value: Expr::Identifier(Ident::new("DYNAMIC".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("PACK_KEYS"),
+                value: Expr::value(test_utils::number("1"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("STATS_AUTO_RECALC"),
+                value: Expr::value(test_utils::number("1"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("STATS_PERSISTENT"),
+                value: Expr::value(test_utils::number("0"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("STATS_SAMPLE_PAGES"),
+                value: Expr::value(test_utils::number("128"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("STATS_SAMPLE_PAGES"),
+                value: Expr::value(test_utils::number("128"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("INSERT_METHOD"),
+                value: Expr::Identifier(Ident::new("FIRST".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("COMPRESSION"),
+                value: Expr::value(Value::SingleQuotedString("ZLIB".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("ENCRYPTION"),
+                value: Expr::value(Value::SingleQuotedString("Y".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("MAX_ROWS"),
+                value: Expr::value(test_utils::number("10000"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("MIN_ROWS"),
+                value: Expr::value(test_utils::number("10"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("AUTOEXTEND_SIZE"),
+                value: Expr::value(test_utils::number("64"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("AVG_ROW_LENGTH"),
+                value: Expr::value(test_utils::number("128"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("CHECKSUM"),
+                value: Expr::value(test_utils::number("1"))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("CONNECTION"),
+                value: Expr::value(Value::SingleQuotedString("mysql://localhost".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("ENGINE_ATTRIBUTE"),
+                value: Expr::value(Value::SingleQuotedString("primary".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("PASSWORD"),
+                value: Expr::value(Value::SingleQuotedString("secure_password".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("SECONDARY_ENGINE_ATTRIBUTE"),
+                value: Expr::value(Value::SingleQuotedString("secondary_attr".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::Ident(Ident::new(
+                "START TRANSACTION".to_owned()
+            ))));
+            assert!(
+                plain_options.contains(&SqlOption::TableSpace(TablespaceOption {
+                    name: "my_tablespace".to_string(),
+                    storage: Some(StorageType::Disk),
+                }))
+            );
+
+            assert!(plain_options.contains(&SqlOption::NamedParenthesizedList(
+                NamedParenthesizedList {
+                    key: Ident::new("UNION"),
+                    name: None,
+                    values: vec![
+                        Ident::new("table1".to_string()),
+                        Ident::new("table2".to_string()),
+                        Ident::new("table3".to_string())
+                    ]
+                }
+            )));
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("DATA DIRECTORY"),
+                value: Expr::value(Value::SingleQuotedString("/var/lib/mysql/data".to_owned()))
+            }));
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("INDEX DIRECTORY"),
+                value: Expr::value(Value::SingleQuotedString("/var/lib/mysql/index".to_owned()))
+            }));
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -916,13 +1127,12 @@ fn parse_create_table_set_enum() {
 
 #[test]
 fn parse_create_table_engine_default_charset() {
-    let sql = "CREATE TABLE foo (id INT(11)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3";
+    let sql = "CREATE TABLE foo (id INT(11)) ENGINE = InnoDB DEFAULT CHARSET = utf8mb3";
     match mysql().verified_stmt(sql) {
         Statement::CreateTable(CreateTable {
             name,
             columns,
-            engine,
-            default_charset,
+            table_options,
             ..
         }) => {
             assert_eq!(name.to_string(), "foo");
@@ -934,14 +1144,24 @@ fn parse_create_table_engine_default_charset() {
                 },],
                 columns
             );
-            assert_eq!(
-                engine,
-                Some(TableEngine {
-                    name: "InnoDB".to_string(),
-                    parameters: None
-                })
-            );
-            assert_eq!(default_charset, Some("utf8mb3".to_string()));
+
+            let plain_options = match table_options {
+                CreateTableOptions::Plain(options) => options,
+                _ => unreachable!(),
+            };
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("DEFAULT CHARSET"),
+                value: Expr::Identifier(Ident::new("utf8mb3".to_owned()))
+            }));
+
+            assert!(plain_options.contains(&SqlOption::NamedParenthesizedList(
+                NamedParenthesizedList {
+                    key: Ident::new("ENGINE"),
+                    name: Some(Ident::new("InnoDB")),
+                    values: vec![]
+                }
+            )));
         }
         _ => unreachable!(),
     }
@@ -949,12 +1169,12 @@ fn parse_create_table_engine_default_charset() {
 
 #[test]
 fn parse_create_table_collate() {
-    let sql = "CREATE TABLE foo (id INT(11)) COLLATE=utf8mb4_0900_ai_ci";
+    let sql = "CREATE TABLE foo (id INT(11)) COLLATE = utf8mb4_0900_ai_ci";
     match mysql().verified_stmt(sql) {
         Statement::CreateTable(CreateTable {
             name,
             columns,
-            collation,
+            table_options,
             ..
         }) => {
             assert_eq!(name.to_string(), "foo");
@@ -966,7 +1186,16 @@ fn parse_create_table_collate() {
                 },],
                 columns
             );
-            assert_eq!(collation, Some("utf8mb4_0900_ai_ci".to_string()));
+
+            let plain_options = match table_options {
+                CreateTableOptions::Plain(options) => options,
+                _ => unreachable!(),
+            };
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("COLLATE"),
+                value: Expr::Identifier(Ident::new("utf8mb4_0900_ai_ci".to_owned()))
+            }));
         }
         _ => unreachable!(),
     }
@@ -974,16 +1203,26 @@ fn parse_create_table_collate() {
 
 #[test]
 fn parse_create_table_both_options_and_as_query() {
-    let sql = "CREATE TABLE foo (id INT(11)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb4_0900_ai_ci AS SELECT 1";
+    let sql = "CREATE TABLE foo (id INT(11)) ENGINE = InnoDB DEFAULT CHARSET = utf8mb3 COLLATE = utf8mb4_0900_ai_ci AS SELECT 1";
     match mysql_and_generic().verified_stmt(sql) {
         Statement::CreateTable(CreateTable {
             name,
-            collation,
             query,
+            table_options,
             ..
         }) => {
             assert_eq!(name.to_string(), "foo");
-            assert_eq!(collation, Some("utf8mb4_0900_ai_ci".to_string()));
+
+            let plain_options = match table_options {
+                CreateTableOptions::Plain(options) => options,
+                _ => unreachable!(),
+            };
+
+            assert!(plain_options.contains(&SqlOption::KeyValue {
+                key: Ident::new("COLLATE"),
+                value: Expr::Identifier(Ident::new("utf8mb4_0900_ai_ci".to_owned()))
+            }));
+
             assert_eq!(
                 query.unwrap().body.as_select().unwrap().projection,
                 vec![SelectItem::UnnamedExpr(Expr::Value(
@@ -994,7 +1233,8 @@ fn parse_create_table_both_options_and_as_query() {
         _ => unreachable!(),
     }
 
-    let sql = r"CREATE TABLE foo (id INT(11)) ENGINE=InnoDB AS SELECT 1 DEFAULT CHARSET=utf8mb3";
+    let sql =
+        r"CREATE TABLE foo (id INT(11)) ENGINE = InnoDB AS SELECT 1 DEFAULT CHARSET = utf8mb3";
     assert!(matches!(
         mysql_and_generic().parse_sql_statements(sql),
         Err(ParserError::ParserError(_))
@@ -1113,6 +1353,7 @@ fn parse_escaped_quote_identifiers_with_escape() {
             for_clause: None,
             settings: None,
             format_clause: None,
+            pipe_operators: vec![],
         }))
     );
 }
@@ -1165,6 +1406,7 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
             for_clause: None,
             settings: None,
             format_clause: None,
+            pipe_operators: vec![],
         }))
     );
 }
@@ -1211,6 +1453,7 @@ fn parse_escaped_backticks_with_escape() {
             for_clause: None,
             settings: None,
             format_clause: None,
+            pipe_operators: vec![],
         }))
     );
 }
@@ -1261,6 +1504,7 @@ fn parse_escaped_backticks_with_no_escape() {
             for_clause: None,
             settings: None,
             format_clause: None,
+            pipe_operators: vec![],
         }))
     );
 }
@@ -1436,6 +1680,7 @@ fn parse_simple_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1484,6 +1729,7 @@ fn parse_ignore_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1532,6 +1778,7 @@ fn parse_priority_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1577,6 +1824,7 @@ fn parse_priority_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1624,6 +1872,7 @@ fn parse_insert_as() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1686,6 +1935,7 @@ fn parse_insert_as() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1735,6 +1985,7 @@ fn parse_replace_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1775,6 +2026,7 @@ fn parse_empty_row_insert() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1839,6 +2091,7 @@ fn parse_insert_with_on_duplicate_update() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 })),
                 source
             );
@@ -1923,6 +2176,128 @@ fn parse_select_with_numeric_prefix_column_name() {
             );
         }
         _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_qualified_identifiers_with_numeric_prefix() {
+    // Case 1: Qualified column name that starts with digits.
+    match mysql().verified_stmt("SELECT t.15to29 FROM my_table AS t") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
+                    assert_eq!(&[Ident::new("t"), Ident::new("15to29")], &parts[..]);
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 2: Qualified column name that starts with digits and on its own represents a number.
+    match mysql().verified_stmt("SELECT t.15e29 FROM my_table AS t") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
+                    assert_eq!(&[Ident::new("t"), Ident::new("15e29")], &parts[..]);
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 3: Unqualified, the same token is parsed as a number.
+    match mysql()
+        .parse_sql_statements("SELECT 15e29 FROM my_table")
+        .unwrap()
+        .pop()
+    {
+        Some(Statement::Query(q)) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::Value(ValueWithSpan { value, .. }))) => {
+                    assert_eq!(&number("15e29"), value);
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 4: Quoted simple identifier.
+    match mysql().verified_stmt("SELECT `15e29` FROM my_table") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::Identifier(name))) => {
+                    assert_eq!(&Ident::with_quote('`', "15e29"), name);
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 5: Quoted compound identifier.
+    match mysql().verified_stmt("SELECT t.`15e29` FROM my_table AS t") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
+                    assert_eq!(
+                        &[Ident::new("t"), Ident::with_quote('`', "15e29")],
+                        &parts[..]
+                    );
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 6: Multi-level compound identifiers.
+    match mysql().verified_stmt("SELECT 1db.1table.1column") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
+                    assert_eq!(
+                        &[
+                            Ident::new("1db"),
+                            Ident::new("1table"),
+                            Ident::new("1column")
+                        ],
+                        &parts[..]
+                    );
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
+    }
+
+    // Case 7: Multi-level compound quoted identifiers.
+    match mysql().verified_stmt("SELECT `1`.`2`.`3`") {
+        Statement::Query(q) => match *q.body {
+            SetExpr::Select(s) => match s.projection.last() {
+                Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
+                    assert_eq!(
+                        &[
+                            Ident::with_quote('`', "1"),
+                            Ident::with_quote('`', "2"),
+                            Ident::with_quote('`', "3")
+                        ],
+                        &parts[..]
+                    );
+                }
+                proj => panic!("Unexpected projection: {:?}", proj),
+            },
+            body => panic!("Unexpected statement body: {:?}", body),
+        },
+        stmt => panic!("Unexpected statement: {:?}", stmt),
     }
 }
 
@@ -2132,11 +2507,13 @@ fn parse_alter_table_add_column() {
             if_exists,
             only,
             operations,
+            iceberg,
             location: _,
             on_cluster: _,
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
+            assert!(!iceberg);
             assert!(!only);
             assert_eq!(
                 operations,
@@ -2161,8 +2538,7 @@ fn parse_alter_table_add_column() {
             if_exists,
             only,
             operations,
-            location: _,
-            on_cluster: _,
+            ..
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
@@ -2199,8 +2575,7 @@ fn parse_alter_table_add_columns() {
             if_exists,
             only,
             operations,
-            location: _,
-            on_cluster: _,
+            ..
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
@@ -2426,6 +2801,7 @@ fn parse_alter_table_with_algorithm() {
                 operations,
                 vec![
                     AlterTableOperation::DropColumn {
+                        has_column_keyword: true,
                         column_name: Ident::new("password_digest"),
                         if_exists: false,
                         drop_behavior: None,
@@ -2473,6 +2849,7 @@ fn parse_alter_table_with_lock() {
                 operations,
                 vec![
                     AlterTableOperation::DropColumn {
+                        has_column_keyword: true,
                         column_name: Ident::new("password_digest"),
                         if_exists: false,
                         drop_behavior: None,
@@ -2623,6 +3000,7 @@ fn parse_substring_in_select() {
                     for_clause: None,
                     settings: None,
                     format_clause: None,
+                    pipe_operators: vec![],
                 }),
                 query
             );
@@ -2898,9 +3276,12 @@ fn parse_hex_string_introducer() {
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
-                projection: vec![SelectItem::UnnamedExpr(Expr::IntroducedString {
-                    introducer: "_latin1".to_string(),
-                    value: Value::HexStringLiteral("4D7953514C".to_string())
+                projection: vec![SelectItem::UnnamedExpr(Expr::Prefixed {
+                    prefix: Ident::from("_latin1"),
+                    value: Expr::Value(
+                        Value::HexStringLiteral("4D7953514C".to_string()).with_empty_span()
+                    )
+                    .into(),
                 })],
                 from: vec![],
                 lateral_views: vec![],
@@ -2926,6 +3307,7 @@ fn parse_hex_string_introducer() {
             for_clause: None,
             settings: None,
             format_clause: None,
+            pipe_operators: vec![],
         }))
     )
 }
@@ -3158,6 +3540,7 @@ fn parse_grant() {
         objects,
         grantees,
         with_grant_option,
+        as_grantor: _,
         granted_by,
     } = stmt
     {
@@ -3365,6 +3748,11 @@ fn parse_begin_without_transaction() {
 }
 
 #[test]
+fn parse_geometric_types_srid_option() {
+    mysql_and_generic().verified_stmt("CREATE TABLE t (a geometry SRID 4326)");
+}
+
+#[test]
 fn parse_double_precision() {
     mysql().verified_stmt("CREATE TABLE foo (bar DOUBLE)");
     mysql().verified_stmt("CREATE TABLE foo (bar DOUBLE(11,0))");
@@ -3399,6 +3787,7 @@ fn parse_create_trigger() {
     assert_eq!(
         create_stmt,
         Statement::CreateTrigger {
+            or_alter: false,
             or_replace: false,
             is_constraint: false,
             name: ObjectName::from(vec![Ident::new("emp_stamp")]),
@@ -3410,13 +3799,14 @@ fn parse_create_trigger() {
             trigger_object: TriggerObject::Row,
             include_each: true,
             condition: None,
-            exec_body: TriggerExecBody {
+            exec_body: Some(TriggerExecBody {
                 exec_type: TriggerExecBodyType::Function,
                 func_desc: FunctionDesc {
                     name: ObjectName::from(vec![Ident::new("emp_stamp")]),
                     args: None,
                 }
-            },
+            }),
+            statements: None,
             characteristics: None,
         }
     );
@@ -3592,5 +3982,56 @@ fn test_variable_assignment_using_colon_equal() {
 fn parse_straight_join() {
     mysql().verified_stmt(
         "SELECT a.*, b.* FROM table_a AS a STRAIGHT_JOIN table_b AS b ON a.b_id = b.id",
+    );
+    // Without table alias
+    mysql()
+        .verified_stmt("SELECT a.*, b.* FROM table_a STRAIGHT_JOIN table_b AS b ON a.b_id = b.id");
+}
+
+#[test]
+fn mysql_foreign_key_with_index_name() {
+    mysql().verified_stmt(
+        "CREATE TABLE orders (customer_id INT, INDEX idx_customer (customer_id), CONSTRAINT fk_customer FOREIGN KEY idx_customer (customer_id) REFERENCES customers(id))",
+    );
+}
+
+#[test]
+fn parse_drop_index() {
+    let sql = "DROP INDEX idx_name ON table_name";
+    match mysql().verified_stmt(sql) {
+        Statement::Drop {
+            object_type,
+            if_exists,
+            names,
+            cascade,
+            restrict,
+            purge,
+            temporary,
+            table,
+        } => {
+            assert!(!if_exists);
+            assert_eq!(ObjectType::Index, object_type);
+            assert_eq!(
+                vec!["idx_name"],
+                names.iter().map(ToString::to_string).collect::<Vec<_>>()
+            );
+            assert!(!cascade);
+            assert!(!restrict);
+            assert!(!purge);
+            assert!(!temporary);
+            assert!(table.is_some());
+            assert_eq!("table_name", table.unwrap().to_string());
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_alter_table_drop_index() {
+    assert_matches!(
+        alter_table_op(
+            mysql_and_generic().verified_stmt("ALTER TABLE tab DROP INDEX idx_index")
+        ),
+        AlterTableOperation::DropIndex { name } if name.value == "idx_index"
     );
 }
