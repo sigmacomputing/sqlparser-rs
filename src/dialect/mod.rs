@@ -892,6 +892,11 @@ pub trait Dialect: Debug + Any {
         false
     }
 
+    /// Returns true if the dialect supports writing `[*]` to select all elements in a JSON array.
+    fn supports_semi_structured_array_all_elements(&self) -> bool {
+        false
+    }
+
     /// Returns true if the specified keyword is reserved and cannot be
     /// used as an identifier without special handling like quoting.
     fn is_reserved_for_identifier(&self, kw: Keyword) -> bool {
