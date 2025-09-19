@@ -9079,10 +9079,10 @@ impl<'a> Parser<'a> {
                 }),
             }))
         } else {
-            return self.expected_ref(
+            self.expected_ref(
                 "{RENAME TO | { RENAME | ADD } VALUE}",
                 self.peek_token_ref(),
-            );
+            )
         }
     }
 

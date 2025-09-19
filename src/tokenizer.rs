@@ -725,6 +725,18 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+pub struct TokenWithRange {
+    pub token: Token,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl TokenWithRange {
+    pub fn new(token: Token, start: usize, end: usize) -> Self {
+        Self { token, start, end }
+    }
+}
+
 /// Tokenizer error
 #[derive(Debug, PartialEq, Eq)]
 pub struct TokenizerError {
@@ -743,6 +755,7 @@ impl std::error::Error for TokenizerError {}
 
 struct State<'a> {
     peekable: Peekable<Chars<'a>>,
+    pub pos: usize,
     pub line: u64,
     pub col: u64,
 }
@@ -753,6 +766,7 @@ impl State<'_> {
         match self.peekable.next() {
             None => None,
             Some(s) => {
+                self.pos += 1;
                 if s == '\n' {
                     self.line += 1;
                     self.col = 1;
@@ -878,6 +892,27 @@ impl<'a> Tokenizer<'a> {
         Ok(twl.into_iter().map(|t| t.token).collect())
     }
 
+    pub fn tokenize_with_range(&mut self) -> Result<Vec<TokenWithRange>, TokenizerError> {
+        let mut tokens = Vec::<TokenWithRange>::new();
+        let mut state = State {
+            peekable: self.query.chars().peekable(),
+            line: 1,
+            col: 1,
+            pos: 0,
+        };
+
+        let mut start = state.pos;
+        while let Some(token) = self.next_token(&mut state, tokens.last().map(|t| &t.token))? {
+            tokens.push(TokenWithRange {
+                token,
+                start,
+                end: state.pos,
+            });
+            start = state.pos;
+        }
+        Ok(tokens)
+    }
+
     /// Tokenize the statement and produce a vector of tokens with location information
     pub fn tokenize_with_location(&mut self) -> Result<Vec<TokenWithSpan>, TokenizerError> {
         let mut tokens: Vec<TokenWithSpan> = vec![];
@@ -895,6 +930,7 @@ impl<'a> Tokenizer<'a> {
             peekable: self.query.chars().peekable(),
             line: 1,
             col: 1,
+            pos: 0,
         };
 
         let mut location = state.location();
@@ -924,6 +960,7 @@ impl<'a> Tokenizer<'a> {
                 peekable: word.chars().peekable(),
                 line: 0,
                 col: 0,
+                pos: 0,
             };
             let mut s = peeking_take_while(&mut inner_state, |ch| matches!(ch, '0'..='9' | '.'));
             let s2 = peeking_take_while(chars, |ch| matches!(ch, '0'..='9' | '.'));
@@ -3509,6 +3546,7 @@ mod tests {
             peekable: s.chars().peekable(),
             line: 0,
             col: 0,
+            pos: 0,
         };
 
         assert_eq!(
