@@ -104,6 +104,8 @@ pub enum Token {
     UnicodeStringLiteral(String),
     /// Hexadecimal string literal: i.e.: X'deadbeef'
     HexStringLiteral(String),
+    /// Interpolated text using Mustache-style syntax, e.g. {{FooBar}}.
+    Mustache(String),
     /// Comma
     Comma,
     /// Whitespace (space, tab, etc)
@@ -303,6 +305,7 @@ impl fmt::Display for Token {
             Token::DoubleQuotedRawStringLiteral(ref s) => write!(f, "R\"{s}\""),
             Token::TripleSingleQuotedRawStringLiteral(ref s) => write!(f, "R'''{s}'''"),
             Token::TripleDoubleQuotedRawStringLiteral(ref s) => write!(f, "R\"\"\"{s}\"\"\""),
+            Token::Mustache(ref s) => write!(f, "{{{s}}}"),
             Token::Comma => f.write_str(","),
             Token::Whitespace(ws) => write!(f, "{ws}"),
             Token::DoubleEq => f.write_str("=="),
@@ -1599,7 +1602,45 @@ impl<'a> Tokenizer<'a> {
                         _ => Ok(Some(Token::Caret)),
                     }
                 }
-                '{' => self.consume_and_return(chars, Token::LBrace),
+                '{' => {
+                    chars.next(); // consume the '{'
+                    if let Some('{') = chars.peek() {
+                        chars.next(); // consume the second '{'
+
+                        let mut s = String::new();
+                        let mut is_terminated = false;
+                        let mut prev: Option<char> = None;
+
+                        while let Some(&ch) = chars.peek() {
+                            if prev == Some('}') {
+                                if ch == '}' {
+                                    chars.next();
+                                    is_terminated = true;
+                                    break;
+                                } else {
+                                    s.push('}');
+                                    s.push(ch);
+                                }
+                            } else if ch != '}' {
+                                s.push(ch);
+                            }
+
+                            prev = Some(ch);
+                            chars.next();
+                        }
+
+                        if chars.peek().is_none() && !is_terminated {
+                            self.tokenizer_error(
+                                chars.location(),
+                                "Unterminated mustache interpolation",
+                            )
+                        } else {
+                            Ok(Some(Token::Mustache(s)))
+                        }
+                    } else {
+                        Ok(Some(Token::LBrace))
+                    }
+                }
                 '}' => self.consume_and_return(chars, Token::RBrace),
                 '#' if dialect_of!(self is SnowflakeDialect | BigQueryDialect | MySqlDialect | HiveDialect) =>
                 {
