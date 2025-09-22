@@ -769,7 +769,7 @@ impl State<'_> {
         match self.peekable.next() {
             None => None,
             Some(s) => {
-                self.pos += 1;
+                self.pos += s.len_utf8();
                 if s == '\n' {
                     self.line += 1;
                     self.col = 1;
