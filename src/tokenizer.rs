@@ -1236,7 +1236,7 @@ impl<'a> Tokenizer<'a> {
                     // if the prev token is not a word, then this is not a valid sql
                     // word or number.
                     if ch == '.' && chars.peekable.clone().nth(1) == Some('_') {
-                        if let Some(Token::Word(_)) = prev_token {
+                        if let Some(Token::Word(_) | Token::Mustache(_)) = prev_token {
                             chars.next();
                             return Ok(Some(Token::Period));
                         }
@@ -4137,5 +4137,19 @@ mod tests {
         if let Ok(tokens) = Tokenizer::new(&dialect, &sql).tokenize() {
             panic!("Tokenizer should have failed on {sql}, but it succeeded with {tokens:?}");
         }
+    }
+
+    #[test]
+    fn tokenize_mustache_dot_ident() {
+        all_dialects_where(|d| d.is_identifier_start('_')).tokenizes_to(
+            "SELECT {{schema}}._column",
+            vec![
+                Token::make_keyword("SELECT"),
+                Token::Whitespace(Whitespace::Space),
+                Token::Mustache("schema".to_owned()),
+                Token::Period,
+                Token::make_word("_column", None),
+            ],
+        );
     }
 }
