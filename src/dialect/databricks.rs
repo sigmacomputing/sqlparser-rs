@@ -84,4 +84,9 @@ impl Dialect for DatabricksDialect {
     fn supports_nested_comments(&self) -> bool {
         true
     }
+
+    // https://docs.databricks.com/aws/en/sql/language-manual/data-types/string-type#literals
+    fn supports_string_literal_backslash_escape(&self) -> bool {
+        true
+    }
 }

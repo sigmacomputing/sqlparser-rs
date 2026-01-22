@@ -18,7 +18,7 @@
 use sqlparser::ast::helpers::attached_token::AttachedToken;
 use sqlparser::ast::*;
 use sqlparser::dialect::{DatabricksDialect, GenericDialect};
-use sqlparser::parser::ParserError;
+use sqlparser::parser::{ParserError, ParserOptions};
 use test_utils::*;
 
 #[macro_use]
@@ -26,6 +26,13 @@ mod test_utils;
 
 fn databricks() -> TestedDialects {
     TestedDialects::new(vec![Box::new(DatabricksDialect {})])
+}
+
+fn databricks_no_unescape() -> TestedDialects {
+    TestedDialects::new_with_options(
+        vec![Box::new(DatabricksDialect {})],
+        ParserOptions::new().with_unescape(false),
+    )
 }
 
 fn databricks_and_generic() -> TestedDialects {
@@ -52,6 +59,22 @@ fn test_databricks_identifiers() {
             (Value::DoubleQuotedString("Ä".to_owned())).with_empty_span()
         ))
     );
+}
+
+// Test examples from https://docs.databricks.com/aws/en/sql/language-manual/data-types/string-type#examples
+//
+// Note: string literals are broken on DBx when unescape in turned on (the default).
+#[test]
+fn test_databricks_string_literals() {
+    databricks_no_unescape().verified_expr(r"'O\'Connell'");
+    databricks_no_unescape().verified_expr(r"'Some\nText'");
+    databricks_no_unescape().verified_expr("'서울시'");
+    databricks_no_unescape().verified_expr(r"'\\'");
+
+    // FIXME: raw strings are broken
+    // databricks_no_unescape().verified_query(r"SELECT 'Hou$e', 'Hou\$e', r'Hou$e', r'Hou\$e'");
+    // databricks_no_unescape().verified_expr(r"r'Some\nText'");
+    // databricks_no_unescape().verified_expr(r"r'\\'");
 }
 
 #[test]
