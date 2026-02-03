@@ -15,7 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, Precedence};
+use crate::parser::{Parser, ParserError};
+use crate::tokenizer::Token;
 
 /// A [`Dialect`] for [Databricks SQL](https://www.databricks.com/)
 ///
@@ -36,6 +38,19 @@ impl Dialect for DatabricksDialect {
 
     fn is_identifier_part(&self, ch: char) -> bool {
         matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
+    }
+
+    fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
+        let token = parser.peek_token();
+        // : is used for JSON path access
+        match token.token {
+            Token::Colon => Some(Ok(self.prec_value(Precedence::Period))),
+            _ => None,
+        }
+    }
+
+    fn supports_semi_structured_array_all_elements(&self) -> bool {
+        true
     }
 
     fn supports_filter_during_aggregation(&self) -> bool {
@@ -67,6 +82,11 @@ impl Dialect for DatabricksDialect {
 
     /// See <https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-comment>
     fn supports_nested_comments(&self) -> bool {
+        true
+    }
+
+    // https://docs.databricks.com/aws/en/sql/language-manual/data-types/string-type#literals
+    fn supports_string_literal_backslash_escape(&self) -> bool {
         true
     }
 

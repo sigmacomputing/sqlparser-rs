@@ -1243,6 +1243,12 @@ pub enum TableFactor {
         subquery: Box<Query>,
         alias: Option<TableAlias>,
     },
+    /// A pass-through query string that is not parsed.
+    /// This is useful while building/rewriting queries with a known valid SQL string and to avoid parsing it.
+    PassThroughQuery {
+        query: String,
+        alias: Option<TableAlias>,
+    },
     /// `TABLE(<expr>)[ AS <alias> ]`
     TableFunction {
         expr: Expr,
@@ -1933,6 +1939,13 @@ impl fmt::Display for TableFactor {
                 f.write_str(")")?;
                 if let Some(alias) = alias {
                     write!(f, " {alias}")?;
+                }
+                Ok(())
+            }
+            TableFactor::PassThroughQuery { query, alias } => {
+                write!(f, "({query})")?;
+                if let Some(alias) = alias {
+                    write!(f, " AS {alias}")?;
                 }
                 Ok(())
             }

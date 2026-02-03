@@ -1415,6 +1415,11 @@ impl Spanned for Expr {
                 array_expr,
                 negated: _,
             } => expr.span().union(&array_expr.span()),
+            Expr::InExpr {
+                expr,
+                in_expr,
+                negated: _,
+            } => expr.span().union(&in_expr.span()),
             Expr::Between {
                 expr,
                 negated: _,
@@ -1722,7 +1727,7 @@ impl Spanned for FunctionArgumentClause {
 /// see Spanned impl for JsonPathElem for more information
 impl Spanned for JsonPath {
     fn span(&self) -> Span {
-        let JsonPath { path } = self;
+        let JsonPath { path, has_colon: _ } = self;
 
         union_spans(path.iter().map(|i| i.span()))
     }
@@ -1732,11 +1737,13 @@ impl Spanned for JsonPath {
 ///
 /// Missing spans:
 /// - [JsonPathElem::Dot]
+/// - [JsonPathElem::AllElements]
 impl Spanned for JsonPathElem {
     fn span(&self) -> Span {
         match self {
             JsonPathElem::Dot { .. } => Span::empty(),
             JsonPathElem::Bracket { key } => key.span(),
+            JsonPathElem::AllElements => Span::empty(),
         }
     }
 }
@@ -1883,6 +1890,8 @@ impl Spanned for TableFactor {
             } => subquery
                 .span()
                 .union_opt(&alias.as_ref().map(|alias| alias.span())),
+            // This is usually created at runtime, so we don't have a span for it
+            TableFactor::PassThroughQuery { query: _, alias: _ } => Span::empty(),
             TableFactor::TableFunction { expr, alias } => expr
                 .span()
                 .union_opt(&alias.as_ref().map(|alias| alias.span())),

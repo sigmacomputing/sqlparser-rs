@@ -18,7 +18,7 @@
 use sqlparser::ast::helpers::attached_token::AttachedToken;
 use sqlparser::ast::*;
 use sqlparser::dialect::{DatabricksDialect, GenericDialect};
-use sqlparser::parser::ParserError;
+use sqlparser::parser::{ParserError, ParserOptions};
 use sqlparser::tokenizer::Span;
 use test_utils::*;
 
@@ -27,6 +27,13 @@ mod test_utils;
 
 fn databricks() -> TestedDialects {
     TestedDialects::new(vec![Box::new(DatabricksDialect {})])
+}
+
+fn databricks_no_unescape() -> TestedDialects {
+    TestedDialects::new_with_options(
+        vec![Box::new(DatabricksDialect {})],
+        ParserOptions::new().with_unescape(false),
+    )
 }
 
 fn databricks_and_generic() -> TestedDialects {
@@ -53,6 +60,22 @@ fn test_databricks_identifiers() {
             (Value::DoubleQuotedString("Ä".to_owned())).with_empty_span()
         ))
     );
+}
+
+// Test examples from https://docs.databricks.com/aws/en/sql/language-manual/data-types/string-type#examples
+//
+// Note: string literals are broken on DBx when unescape in turned on (the default).
+#[test]
+fn test_databricks_string_literals() {
+    databricks_no_unescape().verified_expr(r"'O\'Connell'");
+    databricks_no_unescape().verified_expr(r"'Some\nText'");
+    databricks_no_unescape().verified_expr("'서울시'");
+    databricks_no_unescape().verified_expr(r"'\\'");
+
+    // FIXME: raw strings are broken
+    // databricks_no_unescape().verified_query(r"SELECT 'Hou$e', 'Hou\$e', r'Hou$e', r'Hou\$e'");
+    // databricks_no_unescape().verified_expr(r"r'Some\nText'");
+    // databricks_no_unescape().verified_expr(r"r'\\'");
 }
 
 #[test]
@@ -365,4 +388,101 @@ fn data_type_timestamp_ntz() {
         }
         s => panic!("Unexpected statement: {s:?}"),
     }
+}
+
+#[test]
+fn parse_semi_structured_data_traversal() {
+    // basic case
+    let sql = "SELECT a:b.c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // brackets
+    let sql = "SELECT a:b['c'][0] FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::value(Value::SingleQuotedString("c".to_owned()))
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::value(number("0"))
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // asterisk for arrays
+    let sql = "SELECT a:['b'].c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::value(Value::SingleQuotedString("b".to_owned())),
+                    },
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
+
+    // asterisk for arrays
+    let sql = "SELECT a:b[*].c FROM t";
+    let select = databricks().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::JsonAccess {
+            value: Box::new(Expr::Identifier(Ident::new("a"))),
+            path: JsonPath {
+                has_colon: true,
+                path: vec![
+                    JsonPathElem::Dot {
+                        key: "b".to_owned(),
+                        quoted: false
+                    },
+                    JsonPathElem::AllElements,
+                    JsonPathElem::Dot {
+                        key: "c".to_owned(),
+                        quoted: false
+                    }
+                ]
+            },
+        }),
+        select.projection[0]
+    );
 }

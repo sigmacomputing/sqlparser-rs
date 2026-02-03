@@ -600,8 +600,16 @@ pub enum JsonPathElem {
     /// Accesses an object field or array element using bracket notation,
     /// e.g. `obj['foo']`.
     ///
+    /// Note that on Databricks this is *not* equivalent to dot notation; the
+    /// former is case-insensitive but the latter is not.
+    ///
     /// See <https://docs.snowflake.com/en/user-guide/querying-semistructured#bracket-notation>.
     Bracket { key: Expr },
+    /// Accesses all elements in the given (generally array) element. Used for
+    /// constructs like `foo:bar[*].baz`.
+    ///
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-json-path-expression#extract-values-from-arrays>
+    AllElements,
 }
 
 /// A JSON path.
@@ -612,17 +620,22 @@ pub enum JsonPathElem {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct JsonPath {
+    /// True if the path should start with a colon. Some dialects (e.g. Snowflake) allow
+    /// `a['b']`, whereas others (e.g. Databricks) require the colon even in this case
+    /// (so `a:['b']`).
+    pub has_colon: bool,
     pub path: Vec<JsonPathElem>,
 }
 
 impl fmt::Display for JsonPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.has_colon {
+            write!(f, ":")?;
+        }
         for (i, elem) in self.path.iter().enumerate() {
             match elem {
                 JsonPathElem::Dot { key, quoted } => {
-                    if i == 0 {
-                        write!(f, ":")?;
-                    } else {
+                    if i != 0 {
                         write!(f, ".")?;
                     }
 
@@ -634,6 +647,9 @@ impl fmt::Display for JsonPath {
                 }
                 JsonPathElem::Bracket { key } => {
                     write!(f, "[{key}]")?;
+                }
+                JsonPathElem::AllElements => {
+                    write!(f, "[*]")?;
                 }
             }
         }
@@ -839,6 +855,13 @@ pub enum Expr {
     InSubquery {
         expr: Box<Expr>,
         subquery: Box<Query>,
+        negated: bool,
+    },
+    /// XXX not valid SQL syntax, this is a hack needed to support parameter substitution
+    /// `[ NOT ] IN <in_expr>`
+    InExpr {
+        expr: Box<Expr>,
+        in_expr: Box<Expr>,
         negated: bool,
     },
     /// `[ NOT ] IN UNNEST(array_expression)`
@@ -1507,6 +1530,17 @@ impl fmt::Display for Expr {
                 expr,
                 if *negated { "NOT " } else { "" },
                 subquery
+            ),
+            Expr::InExpr {
+                expr,
+                in_expr,
+                negated,
+            } => write!(
+                f,
+                "{} {}IN {}",
+                expr,
+                if *negated { "NOT " } else { "" },
+                in_expr,
             ),
             Expr::InUnnest {
                 expr,
