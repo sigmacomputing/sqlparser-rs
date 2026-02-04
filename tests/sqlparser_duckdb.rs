@@ -24,6 +24,7 @@ use test_utils::*;
 
 use sqlparser::ast::*;
 use sqlparser::dialect::{DuckDbDialect, GenericDialect};
+use sqlparser::parser::ParserError;
 
 fn duckdb() -> TestedDialects {
     TestedDialects::new(vec![Box::new(DuckDbDialect {})])
@@ -44,10 +45,12 @@ fn test_struct() {
             StructField {
                 field_name: Some(Ident::new("v")),
                 field_type: DataType::Varchar(None),
+                options: None,
             },
             StructField {
                 field_name: Some(Ident::new("i")),
                 field_type: DataType::Integer(None),
+                options: None,
             },
         ],
         StructBracketKind::Parentheses,
@@ -84,6 +87,7 @@ fn test_struct() {
             StructField {
                 field_name: Some(Ident::new("v")),
                 field_type: DataType::Varchar(None),
+                options: None,
             },
             StructField {
                 field_name: Some(Ident::new("s")),
@@ -92,14 +96,17 @@ fn test_struct() {
                         StructField {
                             field_name: Some(Ident::new("a1")),
                             field_type: DataType::Integer(None),
+                            options: None,
                         },
                         StructField {
                             field_name: Some(Ident::new("a2")),
                             field_type: DataType::Varchar(None),
+                            options: None,
                         },
                     ],
                     StructBracketKind::Parentheses,
                 ),
+                options: None,
             },
         ],
         StructBracketKind::Parentheses,
@@ -262,6 +269,7 @@ fn test_select_union_by_name() {
                 distinct: None,
                 top: None,
                 projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                exclude: None,
                 top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
@@ -292,6 +300,7 @@ fn test_select_union_by_name() {
                 distinct: None,
                 top: None,
                 projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                exclude: None,
                 top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
@@ -362,7 +371,7 @@ fn test_duckdb_specific_int_types() {
         ("HUGEINT", DataType::HugeInt),
     ];
     for (dtype_string, data_type) in duckdb_dtypes {
-        let sql = format!("SELECT 123::{}", dtype_string);
+        let sql = format!("SELECT 123::{dtype_string}");
         let select = duckdb().verified_only_select(&sql);
         assert_eq!(
             &Expr::Cast {
@@ -691,6 +700,7 @@ fn test_duckdb_union_datatype() {
             transient: Default::default(),
             volatile: Default::default(),
             iceberg: Default::default(),
+            dynamic: Default::default(),
             name: ObjectName::from(vec!["tbl1".into()]),
             columns: vec![
                 ColumnDef {
@@ -729,12 +739,7 @@ fn test_duckdb_union_datatype() {
             ],
             constraints: Default::default(),
             hive_distribution: HiveDistributionStyle::NONE,
-            hive_formats: Some(HiveFormat {
-                row_format: Default::default(),
-                serde_properties: Default::default(),
-                storage: Default::default(),
-                location: Default::default()
-            }),
+            hive_formats: None,
             file_format: Default::default(),
             location: Default::default(),
             query: Default::default(),
@@ -765,7 +770,13 @@ fn test_duckdb_union_datatype() {
             catalog: Default::default(),
             catalog_sync: Default::default(),
             storage_serialization_policy: Default::default(),
-            table_options: CreateTableOptions::None
+            table_options: CreateTableOptions::None,
+            target_lag: None,
+            warehouse: None,
+            version: None,
+            refresh_mode: None,
+            initialize: None,
+            require_user: Default::default(),
         }),
         stmt
     );
@@ -786,7 +797,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            duckdb().verified_stmt(&format!("USE {}", object_name)),
+            duckdb().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -794,7 +805,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                duckdb().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
+                duckdb().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
@@ -806,7 +817,9 @@ fn parse_use() {
     for &quote in &quote_styles {
         // Test double identifier with different type of quotes
         assert_eq!(
-            duckdb().verified_stmt(&format!("USE {0}CATALOG{0}.{0}my_schema{0}", quote)),
+            duckdb().verified_stmt(&format!(
+                "USE {quote}CATALOG{quote}.{quote}my_schema{quote}"
+            )),
             Statement::Use(Use::Object(ObjectName::from(vec![
                 Ident::with_quote(quote, "CATALOG"),
                 Ident::with_quote(quote, "my_schema")
@@ -821,4 +834,39 @@ fn parse_use() {
             Ident::new("my_schema")
         ])))
     );
+}
+
+#[test]
+fn test_duckdb_trim() {
+    let real_sql = r#"SELECT customer_id, TRIM(item_price_id, '"', "a") AS item_price_id FROM models_staging.subscriptions"#;
+    assert_eq!(duckdb().verified_stmt(real_sql).to_string(), real_sql);
+
+    let sql_only_select = "SELECT TRIM('xyz', 'a')";
+    let select = duckdb().verified_only_select(sql_only_select);
+    assert_eq!(
+        &Expr::Trim {
+            expr: Box::new(Expr::Value(
+                Value::SingleQuotedString("xyz".to_owned()).with_empty_span()
+            )),
+            trim_where: None,
+            trim_what: None,
+            trim_characters: Some(vec![Expr::Value(
+                Value::SingleQuotedString("a".to_owned()).with_empty_span()
+            )]),
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    // missing comma separation
+    let error_sql = "SELECT TRIM('xyz' 'a')";
+    assert_eq!(
+        ParserError::ParserError("Expected: ), found: 'a'".to_owned()),
+        duckdb().parse_sql_statements(error_sql).unwrap_err()
+    );
+}
+
+#[test]
+fn parse_extract_single_quotes() {
+    let sql = "SELECT EXTRACT('month' FROM my_timestamp) FROM my_table";
+    duckdb().verified_stmt(sql);
 }

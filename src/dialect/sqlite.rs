@@ -68,7 +68,7 @@ impl Dialect for SQLiteDialect {
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         if parser.parse_keyword(Keyword::REPLACE) {
             parser.prev_token();
-            Some(parser.parse_insert())
+            Some(parser.parse_insert(parser.get_current_token().clone()))
         } else {
             None
         }
@@ -108,6 +108,12 @@ impl Dialect for SQLiteDialect {
     }
 
     fn supports_dollar_placeholder(&self) -> bool {
+        true
+    }
+
+    /// SQLite supports `NOTNULL` as aliases for `IS NOT NULL`
+    /// See: <https://sqlite.org/syntax/expr.html>
+    fn supports_notnull_operator(&self) -> bool {
         true
     }
 }

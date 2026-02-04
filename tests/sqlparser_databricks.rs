@@ -19,6 +19,7 @@ use sqlparser::ast::helpers::attached_token::AttachedToken;
 use sqlparser::ast::*;
 use sqlparser::dialect::{DatabricksDialect, GenericDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 #[macro_use]
@@ -179,6 +180,7 @@ fn test_databricks_lambdas() {
 #[test]
 fn test_values_clause() {
     let values = Values {
+        value_keyword: false,
         explicit_row: false,
         rows: vec![
             vec![
@@ -236,7 +238,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            databricks().verified_stmt(&format!("USE {}", object_name)),
+            databricks().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -244,7 +246,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                databricks().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
+                databricks().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
@@ -256,21 +258,21 @@ fn parse_use() {
     for &quote in &quote_styles {
         // Test single identifier with keyword and different type of quotes
         assert_eq!(
-            databricks().verified_stmt(&format!("USE CATALOG {0}my_catalog{0}", quote)),
+            databricks().verified_stmt(&format!("USE CATALOG {quote}my_catalog{quote}")),
             Statement::Use(Use::Catalog(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_catalog".to_string(),
             )])))
         );
         assert_eq!(
-            databricks().verified_stmt(&format!("USE DATABASE {0}my_database{0}", quote)),
+            databricks().verified_stmt(&format!("USE DATABASE {quote}my_database{quote}")),
             Statement::Use(Use::Database(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_database".to_string(),
             )])))
         );
         assert_eq!(
-            databricks().verified_stmt(&format!("USE SCHEMA {0}my_schema{0}", quote)),
+            databricks().verified_stmt(&format!("USE SCHEMA {quote}my_schema{quote}")),
             Statement::Use(Use::Schema(ObjectName::from(vec![Ident::with_quote(
                 quote,
                 "my_schema".to_string(),
@@ -349,10 +351,14 @@ fn data_type_timestamp_ntz() {
     // Literal
     assert_eq!(
         databricks().verified_expr("TIMESTAMP_NTZ '2025-03-29T18:52:00'"),
-        Expr::TypedString {
-            data_type: DataType::TimestampNtz,
-            value: Value::SingleQuotedString("2025-03-29T18:52:00".to_owned())
-        }
+        Expr::TypedString(TypedString {
+            data_type: DataType::TimestampNtz(None),
+            value: ValueWithSpan {
+                value: Value::SingleQuotedString("2025-03-29T18:52:00".to_owned()),
+                span: Span::empty(),
+            },
+            uses_odbc_syntax: false
+        })
     );
 
     // Cast
@@ -363,7 +369,7 @@ fn data_type_timestamp_ntz() {
             expr: Box::new(Expr::Nested(Box::new(Expr::Identifier(
                 "created_at".into()
             )))),
-            data_type: DataType::TimestampNtz,
+            data_type: DataType::TimestampNtz(None),
             format: None
         }
     );
@@ -375,12 +381,12 @@ fn data_type_timestamp_ntz() {
                 columns,
                 vec![ColumnDef {
                     name: "x".into(),
-                    data_type: DataType::TimestampNtz,
+                    data_type: DataType::TimestampNtz(None),
                     options: vec![],
                 }]
             );
         }
-        s => panic!("Unexpected statement: {:?}", s),
+        s => panic!("Unexpected statement: {s:?}"),
     }
 }
 

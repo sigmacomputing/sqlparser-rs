@@ -28,7 +28,7 @@ use test_utils::*;
 use sqlparser::ast::Expr::{BinaryOp, Identifier};
 use sqlparser::ast::SelectItem::UnnamedExpr;
 use sqlparser::ast::TableFactor::Table;
-use sqlparser::ast::Value::Number;
+use sqlparser::ast::Value::Boolean;
 use sqlparser::ast::*;
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::dialect::GenericDialect;
@@ -60,6 +60,7 @@ fn parse_map_access_expr() {
                     ),
                 })],
             })],
+            exclude: None,
             into: None,
             from: vec![TableWithJoins {
                 relation: table_from_name(ObjectName::from(vec![Ident::new("foos")])),
@@ -224,6 +225,10 @@ fn parse_create_table() {
     clickhouse().verified_stmt(
         r#"CREATE TABLE "x" ("a" "int") ENGINE = MergeTree ORDER BY "x" AS SELECT * FROM "t" WHERE true"#,
     );
+    clickhouse().one_statement_parses_to(
+        "CREATE TABLE x (a int) ENGINE = MergeTree() ORDER BY a",
+        "CREATE TABLE x (a INT) ENGINE = MergeTree ORDER BY a",
+    );
 }
 
 #[test]
@@ -238,12 +243,10 @@ fn parse_alter_table_attach_and_detach_partition() {
         match clickhouse_and_generic()
             .verified_stmt(format!("ALTER TABLE t0 {operation} PARTITION part").as_str())
         {
-            Statement::AlterTable {
-                name, operations, ..
-            } => {
-                pretty_assertions::assert_eq!("t0", name.to_string());
+            Statement::AlterTable(alter_table) => {
+                pretty_assertions::assert_eq!("t0", alter_table.name.to_string());
                 pretty_assertions::assert_eq!(
-                    operations[0],
+                    alter_table.operations[0],
                     if operation == &"ATTACH" {
                         AlterTableOperation::AttachPartition {
                             partition: Partition::Expr(Identifier(Ident::new("part"))),
@@ -261,9 +264,9 @@ fn parse_alter_table_attach_and_detach_partition() {
         match clickhouse_and_generic()
             .verified_stmt(format!("ALTER TABLE t1 {operation} PART part").as_str())
         {
-            Statement::AlterTable {
+            Statement::AlterTable(AlterTable {
                 name, operations, ..
-            } => {
+            }) => {
                 pretty_assertions::assert_eq!("t1", name.to_string());
                 pretty_assertions::assert_eq!(
                     operations[0],
@@ -303,9 +306,9 @@ fn parse_alter_table_add_projection() {
         "ALTER TABLE t0 ADD PROJECTION IF NOT EXISTS my_name",
         " (SELECT a, b GROUP BY a ORDER BY b)",
     )) {
-        Statement::AlterTable {
+        Statement::AlterTable(AlterTable {
             name, operations, ..
-        } => {
+        }) => {
             assert_eq!(name, ObjectName::from(vec!["t0".into()]));
             assert_eq!(1, operations.len());
             assert_eq!(
@@ -375,9 +378,9 @@ fn parse_alter_table_add_projection() {
 fn parse_alter_table_drop_projection() {
     match clickhouse_and_generic().verified_stmt("ALTER TABLE t0 DROP PROJECTION IF EXISTS my_name")
     {
-        Statement::AlterTable {
+        Statement::AlterTable(AlterTable {
             name, operations, ..
-        } => {
+        }) => {
             assert_eq!(name, ObjectName::from(vec!["t0".into()]));
             assert_eq!(1, operations.len());
             assert_eq!(
@@ -408,9 +411,9 @@ fn parse_alter_table_clear_and_materialize_projection() {
             format!("ALTER TABLE t0 {keyword} PROJECTION IF EXISTS my_name IN PARTITION p0",)
                 .as_str(),
         ) {
-            Statement::AlterTable {
+            Statement::AlterTable(AlterTable {
                 name, operations, ..
-            } => {
+            }) => {
                 assert_eq!(name, ObjectName::from(vec!["t0".into()]));
                 assert_eq!(1, operations.len());
                 assert_eq!(
@@ -669,11 +672,13 @@ fn parse_create_table_with_nested_data_types() {
                             DataType::Tuple(vec![
                                 StructField {
                                     field_name: None,
-                                    field_type: DataType::FixedString(128)
+                                    field_type: DataType::FixedString(128),
+                                    options: None,
                                 },
                                 StructField {
                                     field_name: None,
-                                    field_type: DataType::Int128
+                                    field_type: DataType::Int128,
+                                    options: None,
                                 }
                             ])
                         ))),
@@ -685,12 +690,14 @@ fn parse_create_table_with_nested_data_types() {
                             StructField {
                                 field_name: Some("a".into()),
                                 field_type: DataType::Datetime64(9, None),
+                                options: None,
                             },
                             StructField {
                                 field_name: Some("b".into()),
                                 field_type: DataType::Array(ArrayElemTypeDef::Parenthesis(
                                     Box::new(DataType::Uuid)
-                                ))
+                                )),
+                                options: None,
                             },
                         ]),
                         options: vec![],
@@ -895,7 +902,7 @@ fn parse_create_table_with_variant_default_expressions() {
 #[test]
 fn parse_create_view_with_fields_data_types() {
     match clickhouse().verified_stmt(r#"CREATE VIEW v (i "int", f "String") AS SELECT * FROM t"#) {
-        Statement::CreateView { name, columns, .. } => {
+        Statement::CreateView(CreateView { name, columns, .. }) => {
             assert_eq!(name, ObjectName::from(vec!["v".into()]));
             assert_eq!(
                 columns,
@@ -910,7 +917,7 @@ fn parse_create_view_with_fields_data_types() {
                             }]),
                             vec![]
                         )),
-                        options: None
+                        options: None,
                     },
                     ViewColumnDef {
                         name: "f".into(),
@@ -922,7 +929,7 @@ fn parse_create_view_with_fields_data_types() {
                             }]),
                             vec![]
                         )),
-                        options: None
+                        options: None,
                     },
                 ]
             );
@@ -961,38 +968,103 @@ fn parse_limit_by() {
 
 #[test]
 fn parse_settings_in_query() {
-    match clickhouse_and_generic()
-        .verified_stmt(r#"SELECT * FROM t SETTINGS max_threads = 1, max_block_size = 10000"#)
-    {
-        Statement::Query(query) => {
-            assert_eq!(
-                query.settings,
-                Some(vec![
-                    Setting {
-                        key: Ident::new("max_threads"),
-                        value: Number("1".parse().unwrap(), false)
-                    },
-                    Setting {
-                        key: Ident::new("max_block_size"),
-                        value: Number("10000".parse().unwrap(), false)
-                    },
-                ])
-            );
+    fn check_settings(sql: &str, expected: Vec<Setting>) {
+        match clickhouse_and_generic().verified_stmt(sql) {
+            Statement::Query(q) => {
+                assert_eq!(q.settings, Some(expected));
+            }
+            _ => unreachable!(),
         }
-        _ => unreachable!(),
+    }
+
+    for (sql, expected_settings) in [
+        (
+            r#"SELECT * FROM t SETTINGS max_threads = 1, max_block_size = 10000"#,
+            vec![
+                Setting {
+                    key: Ident::new("max_threads"),
+                    value: Expr::value(number("1")),
+                },
+                Setting {
+                    key: Ident::new("max_block_size"),
+                    value: Expr::value(number("10000")),
+                },
+            ],
+        ),
+        (
+            r#"SELECT * FROM t SETTINGS additional_table_filters = {'table_1': 'x != 2'}"#,
+            vec![Setting {
+                key: Ident::new("additional_table_filters"),
+                value: Expr::Dictionary(vec![DictionaryField {
+                    key: Ident::with_quote('\'', "table_1"),
+                    value: Expr::value(single_quoted_string("x != 2")).into(),
+                }]),
+            }],
+        ),
+        (
+            r#"SELECT * FROM t SETTINGS additional_result_filter = 'x != 2', query_plan_optimize_lazy_materialization = false"#,
+            vec![
+                Setting {
+                    key: Ident::new("additional_result_filter"),
+                    value: Expr::value(single_quoted_string("x != 2")),
+                },
+                Setting {
+                    key: Ident::new("query_plan_optimize_lazy_materialization"),
+                    value: Expr::value(Boolean(false)),
+                },
+            ],
+        ),
+    ] {
+        check_settings(sql, expected_settings);
     }
 
     let invalid_cases = vec![
-        "SELECT * FROM t SETTINGS a",
-        "SELECT * FROM t SETTINGS a=",
-        "SELECT * FROM t SETTINGS a=1, b",
-        "SELECT * FROM t SETTINGS a=1, b=",
-        "SELECT * FROM t SETTINGS a=1, b=c",
+        ("SELECT * FROM t SETTINGS a", "Expected: =, found: EOF"),
+        (
+            "SELECT * FROM t SETTINGS a=",
+            "Expected: an expression, found: EOF",
+        ),
+        ("SELECT * FROM t SETTINGS a=1, b", "Expected: =, found: EOF"),
+        (
+            "SELECT * FROM t SETTINGS a=1, b=",
+            "Expected: an expression, found: EOF",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {",
+            "Expected: identifier, found: EOF",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {'b'",
+            "Expected: :, found: EOF",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {'b': ",
+            "Expected: an expression, found: EOF",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {'b': 'c',}",
+            "Expected: identifier, found: }",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {'b': 'c', 'd'}",
+            "Expected: :, found: }",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {'b': 'c', 'd': }",
+            "Expected: an expression, found: }",
+        ),
+        (
+            "SELECT * FROM t SETTINGS a = {ANY(b)}",
+            "Expected: :, found: (",
+        ),
     ];
-    for sql in invalid_cases {
-        clickhouse_and_generic()
-            .parse_sql_statements(sql)
-            .expect_err("Expected: SETTINGS key = value, found: ");
+    for (sql, error_msg) in invalid_cases {
+        assert_eq!(
+            clickhouse_and_generic()
+                .parse_sql_statements(sql)
+                .unwrap_err(),
+            ParserError(error_msg.to_string())
+        );
     }
 }
 #[test]
@@ -1341,7 +1413,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            clickhouse().verified_stmt(&format!("USE {}", object_name)),
+            clickhouse().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -1349,7 +1421,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                clickhouse().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
+                clickhouse().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
@@ -1363,7 +1435,7 @@ fn parse_use() {
 fn test_query_with_format_clause() {
     let format_options = vec!["TabSeparated", "JSONCompact", "NULL"];
     for format in &format_options {
-        let sql = format!("SELECT * FROM t FORMAT {}", format);
+        let sql = format!("SELECT * FROM t FORMAT {format}");
         match clickhouse_and_generic().verified_stmt(&sql) {
             Statement::Query(query) => {
                 if *format == "NULL" {
@@ -1444,7 +1516,7 @@ fn parse_freeze_and_unfreeze_partition() {
             Value::SingleQuotedString("2024-08-14".to_string()).with_empty_span(),
         ));
         match clickhouse_and_generic().verified_stmt(&sql) {
-            Statement::AlterTable { operations, .. } => {
+            Statement::AlterTable(AlterTable { operations, .. }) => {
                 assert_eq!(operations.len(), 1);
                 let expected_operation = if operation_name == &"FREEZE" {
                     AlterTableOperation::FreezePartition {
@@ -1468,7 +1540,7 @@ fn parse_freeze_and_unfreeze_partition() {
         let sql =
             format!("ALTER TABLE t {operation_name} PARTITION '2024-08-14' WITH NAME 'hello'");
         match clickhouse_and_generic().verified_stmt(&sql) {
-            Statement::AlterTable { operations, .. } => {
+            Statement::AlterTable(AlterTable { operations, .. }) => {
                 assert_eq!(operations.len(), 1);
                 let expected_partition = Partition::Expr(Expr::Value(
                     Value::SingleQuotedString("2024-08-14".to_string()).with_empty_span(),
@@ -1546,11 +1618,11 @@ fn parse_select_table_function_settings() {
             settings: Some(vec![
                 Setting {
                     key: "s0".into(),
-                    value: Value::Number("3".parse().unwrap(), false),
+                    value: Expr::value(number("3")),
                 },
                 Setting {
                     key: "s1".into(),
-                    value: Value::SingleQuotedString("s".into()),
+                    value: Expr::value(single_quoted_string("s")),
                 },
             ]),
         },
@@ -1571,11 +1643,11 @@ fn parse_select_table_function_settings() {
             settings: Some(vec![
                 Setting {
                     key: "s0".into(),
-                    value: Value::Number("3".parse().unwrap(), false),
+                    value: Expr::value(number("3")),
                 },
                 Setting {
                     key: "s1".into(),
-                    value: Value::SingleQuotedString("s".into()),
+                    value: Expr::value(single_quoted_string("s")),
                 },
             ]),
         },
@@ -1585,7 +1657,6 @@ fn parse_select_table_function_settings() {
         "SELECT * FROM t(SETTINGS a=)",
         "SELECT * FROM t(SETTINGS a=1, b)",
         "SELECT * FROM t(SETTINGS a=1, b=)",
-        "SELECT * FROM t(SETTINGS a=1, b=c)",
     ];
     for sql in invalid_cases {
         clickhouse_and_generic()
@@ -1630,6 +1701,30 @@ fn parse_table_sample() {
     clickhouse().verified_stmt("SELECT * FROM tbl SAMPLE 1000");
     clickhouse().verified_stmt("SELECT * FROM tbl SAMPLE 1 / 10");
     clickhouse().verified_stmt("SELECT * FROM tbl SAMPLE 1 / 10 OFFSET 1 / 2");
+}
+
+#[test]
+fn test_parse_not_null_in_column_options() {
+    // In addition to DEFAULT and CHECK ClickHouse also supports MATERIALIZED, all of which
+    // can contain `IS NOT NULL` and thus `NOT NULL` as an alias.
+    let canonical = concat!(
+        "CREATE TABLE foo (",
+        "abc INT DEFAULT (42 IS NOT NULL) NOT NULL,",
+        " not_null BOOL MATERIALIZED (abc IS NOT NULL),",
+        " CHECK (abc IS NOT NULL)",
+        ")",
+    );
+    clickhouse().verified_stmt(canonical);
+    clickhouse().one_statement_parses_to(
+        concat!(
+            "CREATE TABLE foo (",
+            "abc INT DEFAULT (42 NOT NULL) NOT NULL,",
+            " not_null BOOL MATERIALIZED (abc NOT NULL),",
+            " CHECK (abc NOT NULL)",
+            ")",
+        ),
+        canonical,
+    );
 }
 
 fn clickhouse() -> TestedDialects {

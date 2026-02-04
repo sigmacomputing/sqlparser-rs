@@ -80,13 +80,18 @@ impl Dialect for DatabricksDialect {
         true
     }
 
-    // https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-comment
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-comment>
     fn supports_nested_comments(&self) -> bool {
         true
     }
 
     // https://docs.databricks.com/aws/en/sql/language-manual/data-types/string-type#literals
     fn supports_string_literal_backslash_escape(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-groupby.html>
+    fn supports_group_by_with_modifier(&self) -> bool {
         true
     }
 }

@@ -182,6 +182,10 @@ visit_noop!(bigdecimal::BigDecimal);
 /// ```
 pub trait Visitor {
     /// Type returned when the recursion returns early.
+    ///
+    /// Important note: The `Break` type should be kept as small as possible to prevent
+    /// stack overflow during recursion. If you need to return an error, consider
+    /// boxing it with `Box` to minimize stack usage.
     type Break;
 
     /// Invoked for any queries that appear in the AST before visiting children
@@ -290,6 +294,10 @@ pub trait Visitor {
 /// ```
 pub trait VisitorMut {
     /// Type returned when the recursion returns early.
+    ///
+    /// Important note: The `Break` type should be kept as small as possible to prevent
+    /// stack overflow during recursion. If you need to return an error, consider
+    /// boxing it with `Box` to minimize stack usage.
     type Break;
 
     /// Invoked for any queries that appear in the AST before visiting children
@@ -884,6 +892,8 @@ mod tests {
                     "PRE: EXPR: a.amount",
                     "POST: EXPR: a.amount",
                     "POST: EXPR: SUM(a.amount)",
+                    "PRE: EXPR: a.MONTH",
+                    "POST: EXPR: a.MONTH",
                     "PRE: EXPR: 'JAN'",
                     "POST: EXPR: 'JAN'",
                     "PRE: EXPR: 'FEB'",
@@ -926,10 +936,10 @@ mod tests {
     #[test]
     fn overflow() {
         let cond = (0..1000)
-            .map(|n| format!("X = {}", n))
+            .map(|n| format!("X = {n}"))
             .collect::<Vec<_>>()
             .join(" OR ");
-        let sql = format!("SELECT x where {0}", cond);
+        let sql = format!("SELECT x where {cond}");
 
         let dialect = GenericDialect {};
         let tokens = Tokenizer::new(&dialect, sql.as_str()).tokenize().unwrap();

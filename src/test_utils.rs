@@ -270,7 +270,7 @@ impl TestedDialects {
                 tokenizer = tokenizer.with_unescape(options.unescape);
             }
             let tokens = tokenizer.tokenize().unwrap();
-            assert_eq!(expected, tokens, "Tokenized differently for {:?}", dialect);
+            assert_eq!(expected, tokens, "Tokenized differently for {dialect:?}");
         });
     }
 }
@@ -291,7 +291,13 @@ pub fn all_dialects() -> TestedDialects {
         Box::new(DuckDbDialect {}),
         Box::new(DatabricksDialect {}),
         Box::new(ClickHouseDialect {}),
+        Box::new(OracleDialect {}),
     ])
+}
+
+// Returns all available dialects with the specified parser options
+pub fn all_dialects_with_options(options: ParserOptions) -> TestedDialects {
+    TestedDialects::new_with_options(all_dialects().dialects, options)
 }
 
 /// Returns all dialects matching the given predicate.
@@ -338,20 +344,12 @@ pub fn expr_from_projection(item: &SelectItem) -> &Expr {
 
 pub fn alter_table_op_with_name(stmt: Statement, expected_name: &str) -> AlterTableOperation {
     match stmt {
-        Statement::AlterTable {
-            name,
-            if_exists,
-            only: is_only,
-            operations,
-            on_cluster: _,
-            location: _,
-            iceberg,
-        } => {
-            assert_eq!(name.to_string(), expected_name);
-            assert!(!if_exists);
-            assert!(!is_only);
-            assert!(!iceberg);
-            only(operations)
+        Statement::AlterTable(alter_table) => {
+            assert_eq!(alter_table.name.to_string(), expected_name);
+            assert!(!alter_table.if_exists);
+            assert!(!alter_table.only);
+            assert_eq!(alter_table.table_type, None);
+            only(alter_table.operations)
         }
         _ => panic!("Expected ALTER TABLE statement"),
     }
@@ -366,8 +364,14 @@ pub fn number(n: &str) -> Value {
     Value::Number(n.parse().unwrap(), false)
 }
 
-pub fn table_alias(name: impl Into<String>) -> Option<TableAlias> {
+/// Creates a [Value::SingleQuotedString]
+pub fn single_quoted_string(s: impl Into<String>) -> Value {
+    Value::SingleQuotedString(s.into())
+}
+
+pub fn table_alias(explicit: bool, name: impl Into<String>) -> Option<TableAlias> {
     Some(TableAlias {
+        explicit,
         name: Ident::new(name),
         columns: vec![],
     })
@@ -403,13 +407,14 @@ pub fn table_from_name(name: ObjectName) -> TableFactor {
     }
 }
 
-pub fn table_with_alias(name: impl Into<String>, alias: impl Into<String>) -> TableFactor {
+pub fn table_with_alias(
+    name: impl Into<String>,
+    with_as_keyword: bool,
+    alias: impl Into<String>,
+) -> TableFactor {
     TableFactor::Table {
         name: ObjectName::from(vec![Ident::new(name)]),
-        alias: Some(TableAlias {
-            name: Ident::new(alias),
-            columns: vec![],
-        }),
+        alias: table_alias(with_as_keyword, alias),
         args: None,
         with_hints: vec![],
         version: None,
@@ -447,4 +452,52 @@ pub fn call(function: &str, args: impl IntoIterator<Item = Expr>) -> Expr {
         over: None,
         within_group: vec![],
     })
+}
+
+/// Gets the first index column (mysql calls it a key part) of the first index found in a
+/// [`Statement::CreateIndex`], [`Statement::CreateTable`], or [`Statement::AlterTable`].
+pub fn index_column(stmt: Statement) -> Expr {
+    match stmt {
+        Statement::CreateIndex(CreateIndex { columns, .. }) => {
+            columns.first().unwrap().column.expr.clone()
+        }
+        Statement::CreateTable(CreateTable { constraints, .. }) => {
+            match constraints.first().unwrap() {
+                TableConstraint::Index(constraint) => {
+                    constraint.columns.first().unwrap().column.expr.clone()
+                }
+                TableConstraint::Unique(constraint) => {
+                    constraint.columns.first().unwrap().column.expr.clone()
+                }
+                TableConstraint::PrimaryKey(constraint) => {
+                    constraint.columns.first().unwrap().column.expr.clone()
+                }
+                TableConstraint::FulltextOrSpatial(constraint) => {
+                    constraint.columns.first().unwrap().column.expr.clone()
+                }
+                _ => panic!("Expected an index, unique, primary, full text, or spatial constraint (foreign key does not support general key part expressions)"),
+            }
+        }
+        Statement::AlterTable(alter_table) => match alter_table.operations.first().unwrap() {
+            AlterTableOperation::AddConstraint { constraint, .. } => {
+                match constraint {
+                    TableConstraint::Index(constraint) => {
+                        constraint.columns.first().unwrap().column.expr.clone()
+                    }
+                    TableConstraint::Unique(constraint) => {
+                        constraint.columns.first().unwrap().column.expr.clone()
+                    }
+                    TableConstraint::PrimaryKey(constraint) => {
+                        constraint.columns.first().unwrap().column.expr.clone()
+                    }
+                    TableConstraint::FulltextOrSpatial(constraint) => {
+                        constraint.columns.first().unwrap().column.expr.clone()
+                    }
+                    _ => panic!("Expected an index, unique, primary, full text, or spatial constraint (foreign key does not support general key part expressions)"),
+                }
+            }
+            _ => panic!("Expected a constraint"),
+        },
+        _ => panic!("Expected CREATE INDEX, ALTER TABLE, or CREATE TABLE, got: {stmt:?}"),
+    }
 }

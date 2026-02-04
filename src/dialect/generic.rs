@@ -52,11 +52,19 @@ impl Dialect for GenericDialect {
         true
     }
 
+    fn supports_left_associative_joins_without_parens(&self) -> bool {
+        true
+    }
+
     fn supports_connect_by(&self) -> bool {
         true
     }
 
     fn supports_match_recognize(&self) -> bool {
+        true
+    }
+
+    fn supports_pipe_operator(&self) -> bool {
         true
     }
 
@@ -105,6 +113,14 @@ impl Dialect for GenericDialect {
     }
 
     fn supports_limit_comma(&self) -> bool {
+        true
+    }
+
+    fn supports_from_first_select(&self) -> bool {
+        true
+    }
+
+    fn supports_projection_trailing_commas(&self) -> bool {
         true
     }
 
@@ -165,6 +181,18 @@ impl Dialect for GenericDialect {
     }
 
     fn supports_filter_during_aggregation(&self) -> bool {
+        true
+    }
+
+    fn supports_select_wildcard_exclude(&self) -> bool {
+        true
+    }
+
+    fn supports_data_type_signed_suffix(&self) -> bool {
+        true
+    }
+
+    fn supports_interval_options(&self) -> bool {
         true
     }
 }

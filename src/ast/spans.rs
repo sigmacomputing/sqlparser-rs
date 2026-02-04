@@ -15,29 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::ast::query::SelectItemQualifiedWildcardKind;
+use crate::{
+    ast::{
+        ddl::AlterSchema, query::SelectItemQualifiedWildcardKind, AlterSchemaOperation, AlterTable,
+        ColumnOptions, CreateOperator, CreateOperatorClass, CreateOperatorFamily, CreateView,
+        ExportData, Owner, TypedString,
+    },
+    tokenizer::TokenWithSpan,
+};
 use core::iter;
 
 use crate::tokenizer::Span;
 
 use super::{
     dcl::SecondaryRoles, value::ValueWithSpan, AccessExpr, AlterColumnOperation,
-    AlterIndexOperation, AlterTableOperation, Array, Assignment, AssignmentTarget, AttachedToken,
-    BeginEndStatements, CaseStatement, CloseCursor, ClusteredIndex, ColumnDef, ColumnOption,
-    ColumnOptionDef, ConditionalStatementBlock, ConditionalStatements, ConflictTarget, ConnectBy,
-    ConstraintCharacteristics, CopySource, CreateIndex, CreateTable, CreateTableOptions, Cte,
-    Delete, DoUpdate, ExceptSelectItem, ExcludeSelectItem, Expr, ExprWithAlias, Fetch, FromTable,
-    Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArgumentList,
-    FunctionArguments, GroupByExpr, HavingBound, IfStatement, IlikeSelectItem, Insert, Interpolate,
-    InterpolateExpr, Join, JoinConstraint, JoinOperator, JsonPath, JsonPathElem, LateralView,
-    LimitClause, MatchRecognizePattern, Measure, NamedParenthesizedList, NamedWindowDefinition,
-    ObjectName, ObjectNamePart, Offset, OnConflict, OnConflictAction, OnInsert, OpenStatement,
-    OrderBy, OrderByExpr, OrderByKind, Partition, PivotValueSource, ProjectionSelect, Query,
-    RaiseStatement, RaiseStatementValue, ReferentialAction, RenameSelectItem, ReplaceSelectElement,
-    ReplaceSelectItem, Select, SelectInto, SelectItem, SetExpr, SqlOption, Statement, Subscript,
-    SymbolDefinition, TableAlias, TableAliasColumnDef, TableConstraint, TableFactor, TableObject,
-    TableOptionsClustered, TableWithJoins, UpdateTableFromKind, Use, Value, Values, ViewColumnDef,
-    WhileStatement, WildcardAdditionalOptions, With, WithFill,
+    AlterIndexOperation, AlterTableOperation, Analyze, Array, Assignment, AssignmentTarget,
+    AttachedToken, BeginEndStatements, CaseStatement, CloseCursor, ClusteredIndex, ColumnDef,
+    ColumnOption, ColumnOptionDef, ConditionalStatementBlock, ConditionalStatements,
+    ConflictTarget, ConnectBy, ConstraintCharacteristics, CopySource, CreateIndex, CreateTable,
+    CreateTableOptions, Cte, Delete, DoUpdate, ExceptSelectItem, ExcludeSelectItem, Expr,
+    ExprWithAlias, Fetch, FromTable, Function, FunctionArg, FunctionArgExpr,
+    FunctionArgumentClause, FunctionArgumentList, FunctionArguments, GroupByExpr, HavingBound,
+    IfStatement, IlikeSelectItem, IndexColumn, Insert, Interpolate, InterpolateExpr, Join,
+    JoinConstraint, JoinOperator, JsonPath, JsonPathElem, LateralView, LimitClause,
+    MatchRecognizePattern, Measure, MergeAction, MergeClause, MergeInsertExpr, MergeInsertKind,
+    NamedParenthesizedList, NamedWindowDefinition, ObjectName, ObjectNamePart, Offset, OnConflict,
+    OnConflictAction, OnInsert, OpenStatement, OrderBy, OrderByExpr, OrderByKind, OutputClause,
+    Partition, PivotValueSource, ProjectionSelect, Query, RaiseStatement, RaiseStatementValue,
+    ReferentialAction, RenameSelectItem, ReplaceSelectElement, ReplaceSelectItem, Select,
+    SelectInto, SelectItem, SetExpr, SqlOption, Statement, Subscript, SymbolDefinition, TableAlias,
+    TableAliasColumnDef, TableConstraint, TableFactor, TableObject, TableOptionsClustered,
+    TableWithJoins, Update, UpdateTableFromKind, Use, Value, Values, ViewColumnDef, WhileStatement,
+    WildcardAdditionalOptions, With, WithFill,
 };
 
 /// Given an iterator of spans, return the [Span::union] of all spans.
@@ -88,6 +97,12 @@ pub trait Spanned {
     ///
     /// [`Location`]: crate::tokenizer::Location
     fn span(&self) -> Span;
+}
+
+impl Spanned for TokenWithSpan {
+    fn span(&self) -> Span {
+        self.span
+    }
 }
 
 impl Spanned for Query {
@@ -210,6 +225,7 @@ impl Spanned for SetExpr {
             SetExpr::Table(_) => Span::empty(),
             SetExpr::Update(statement) => statement.span(),
             SetExpr::Delete(statement) => statement.span(),
+            SetExpr::Merge(statement) => statement.span(),
         }
     }
 }
@@ -218,6 +234,7 @@ impl Spanned for Values {
     fn span(&self) -> Span {
         let Values {
             explicit_row: _, // bool,
+            value_keyword: _,
             rows,
         } = self;
 
@@ -280,7 +297,6 @@ impl Spanned for Values {
 /// - [Statement::Explain]
 /// - [Statement::Savepoint]
 /// - [Statement::ReleaseSavepoint]
-/// - [Statement::Merge]
 /// - [Statement::Cache]
 /// - [Statement::UNCache]
 /// - [Statement::CreateSequence]
@@ -293,38 +309,9 @@ impl Spanned for Values {
 impl Spanned for Statement {
     fn span(&self) -> Span {
         match self {
-            Statement::Analyze {
-                table_name,
-                partitions,
-                for_columns: _,
-                columns,
-                cache_metadata: _,
-                noscan: _,
-                compute_statistics: _,
-                has_table_keyword: _,
-            } => union_spans(
-                core::iter::once(table_name.span())
-                    .chain(partitions.iter().flat_map(|i| i.iter().map(|k| k.span())))
-                    .chain(columns.iter().map(|i| i.span)),
-            ),
-            Statement::Truncate {
-                table_names,
-                partitions,
-                table: _,
-                identity: _,
-                cascade: _,
-                on_cluster: _,
-            } => union_spans(
-                table_names
-                    .iter()
-                    .map(|i| i.name.span())
-                    .chain(partitions.iter().flat_map(|i| i.iter().map(|k| k.span()))),
-            ),
-            Statement::Msck {
-                table_name,
-                repair: _,
-                partition_action: _,
-            } => table_name.span(),
+            Statement::Analyze(analyze) => analyze.span(),
+            Statement::Truncate(truncate) => truncate.span(),
+            Statement::Msck(msck) => msck.span(),
             Statement::Query(query) => query.span(),
             Statement::Insert(insert) => insert.span(),
             Statement::Install { extension_name } => extension_name.span,
@@ -370,44 +357,9 @@ impl Spanned for Statement {
                 CloseCursor::All => Span::empty(),
                 CloseCursor::Specific { name } => name.span,
             },
-            Statement::Update {
-                table,
-                assignments,
-                from,
-                selection,
-                returning,
-                or: _,
-            } => union_spans(
-                core::iter::once(table.span())
-                    .chain(assignments.iter().map(|i| i.span()))
-                    .chain(from.iter().map(|i| i.span()))
-                    .chain(selection.iter().map(|i| i.span()))
-                    .chain(returning.iter().flat_map(|i| i.iter().map(|k| k.span()))),
-            ),
+            Statement::Update(update) => update.span(),
             Statement::Delete(delete) => delete.span(),
-            Statement::CreateView {
-                or_alter: _,
-                or_replace: _,
-                materialized: _,
-                name,
-                columns,
-                query,
-                options,
-                cluster_by,
-                comment: _,
-                with_no_schema_binding: _,
-                if_not_exists: _,
-                temporary: _,
-                to,
-                params: _,
-            } => union_spans(
-                core::iter::once(name.span())
-                    .chain(columns.iter().map(|i| i.span()))
-                    .chain(core::iter::once(query.span()))
-                    .chain(core::iter::once(options.span()))
-                    .chain(cluster_by.iter().map(|i| i.span))
-                    .chain(to.iter().map(|i| i.span())),
-            ),
+            Statement::CreateView(create_view) => create_view.span(),
             Statement::CreateTable(create_table) => create_table.span(),
             Statement::CreateVirtualTable {
                 name,
@@ -420,22 +372,21 @@ impl Spanned for Statement {
                     .chain(module_args.iter().map(|i| i.span)),
             ),
             Statement::CreateIndex(create_index) => create_index.span(),
-            Statement::CreateRole { .. } => Span::empty(),
+            Statement::CreateRole(create_role) => create_role.span(),
+            Statement::CreateExtension(create_extension) => create_extension.span(),
+            Statement::DropExtension(drop_extension) => drop_extension.span(),
+            Statement::DropOperator(drop_operator) => drop_operator.span(),
+            Statement::DropOperatorFamily(drop_operator_family) => drop_operator_family.span(),
+            Statement::DropOperatorClass(drop_operator_class) => drop_operator_class.span(),
             Statement::CreateSecret { .. } => Span::empty(),
+            Statement::CreateServer { .. } => Span::empty(),
             Statement::CreateConnector { .. } => Span::empty(),
-            Statement::AlterTable {
-                name,
-                if_exists: _,
-                only: _,
-                operations,
-                location: _,
-                on_cluster,
-                iceberg: _,
-            } => union_spans(
-                core::iter::once(name.span())
-                    .chain(operations.iter().map(|i| i.span()))
-                    .chain(on_cluster.iter().map(|i| i.span)),
-            ),
+            Statement::CreateOperator(create_operator) => create_operator.span(),
+            Statement::CreateOperatorFamily(create_operator_family) => {
+                create_operator_family.span()
+            }
+            Statement::CreateOperatorClass(create_operator_class) => create_operator_class.span(),
+            Statement::AlterTable(alter_table) => alter_table.span(),
             Statement::AlterIndex { name, operation } => name.span().union(&operation.span()),
             Statement::AlterView {
                 name,
@@ -456,13 +407,11 @@ impl Spanned for Statement {
             Statement::AttachDuckDBDatabase { .. } => Span::empty(),
             Statement::DetachDuckDBDatabase { .. } => Span::empty(),
             Statement::Drop { .. } => Span::empty(),
-            Statement::DropFunction { .. } => Span::empty(),
+            Statement::DropFunction(drop_function) => drop_function.span(),
             Statement::DropDomain { .. } => Span::empty(),
             Statement::DropProcedure { .. } => Span::empty(),
             Statement::DropSecret { .. } => Span::empty(),
             Statement::Declare { .. } => Span::empty(),
-            Statement::CreateExtension { .. } => Span::empty(),
-            Statement::DropExtension { .. } => Span::empty(),
             Statement::Fetch { .. } => Span::empty(),
             Statement::Flush { .. } => Span::empty(),
             Statement::Discard { .. } => Span::empty(),
@@ -475,6 +424,7 @@ impl Spanned for Statement {
             Statement::ShowColumns { .. } => Span::empty(),
             Statement::ShowTables { .. } => Span::empty(),
             Statement::ShowCollation { .. } => Span::empty(),
+            Statement::ShowCharset { .. } => Span::empty(),
             Statement::Use(u) => u.span(),
             Statement::StartTransaction { .. } => Span::empty(),
             Statement::Comment { .. } => Span::empty(),
@@ -501,7 +451,20 @@ impl Spanned for Statement {
             Statement::Explain { .. } => Span::empty(),
             Statement::Savepoint { .. } => Span::empty(),
             Statement::ReleaseSavepoint { .. } => Span::empty(),
-            Statement::Merge { .. } => Span::empty(),
+            Statement::Merge {
+                merge_token,
+                into: _,
+                table: _,
+                source: _,
+                on,
+                clauses,
+                output,
+            } => union_spans(
+                [merge_token.0.span, on.span()]
+                    .into_iter()
+                    .chain(clauses.iter().map(Spanned::span))
+                    .chain(output.iter().map(Spanned::span)),
+            ),
             Statement::Cache { .. } => Span::empty(),
             Statement::UNCache { .. } => Span::empty(),
             Statement::CreateSequence { .. } => Span::empty(),
@@ -529,6 +492,22 @@ impl Spanned for Statement {
             Statement::Print { .. } => Span::empty(),
             Statement::Return { .. } => Span::empty(),
             Statement::List(..) | Statement::Remove(..) => Span::empty(),
+            Statement::ExportData(ExportData {
+                options,
+                query,
+                connection,
+            }) => union_spans(
+                options
+                    .iter()
+                    .map(|i| i.span())
+                    .chain(core::iter::once(query.span()))
+                    .chain(connection.iter().map(|i| i.span())),
+            ),
+            Statement::CreateUser(..) => Span::empty(),
+            Statement::AlterSchema(s) => s.span(),
+            Statement::Vacuum(..) => Span::empty(),
+            Statement::AlterUser(..) => Span::empty(),
+            Statement::Reset(..) => Span::empty(),
         }
     }
 }
@@ -560,6 +539,7 @@ impl Spanned for CreateTable {
             temporary: _,     // bool
             external: _,      // bool
             global: _,        // bool
+            dynamic: _,       // bool
             if_not_exists: _, // bool
             transient: _,     // bool
             volatile: _,      // bool
@@ -573,7 +553,7 @@ impl Spanned for CreateTable {
             location: _,          // string, no span
             query,
             without_rowid: _, // bool
-            like,
+            like: _,
             clone,
             comment: _, // todo, no span
             on_commit: _,
@@ -600,6 +580,12 @@ impl Spanned for CreateTable {
             catalog_sync: _,                    // todo, Snowflake specific
             storage_serialization_policy: _,
             table_options,
+            target_lag: _,
+            warehouse: _,
+            version: _,
+            refresh_mode: _,
+            initialize: _,
+            require_user: _,
         } = self;
 
         union_spans(
@@ -608,7 +594,6 @@ impl Spanned for CreateTable {
                 .chain(columns.iter().map(|i| i.span()))
                 .chain(constraints.iter().map(|i| i.span()))
                 .chain(query.iter().map(|i| i.span()))
-                .chain(like.iter().map(|i| i.span()))
                 .chain(clone.iter().map(|i| i.span())),
         )
     }
@@ -637,82 +622,12 @@ impl Spanned for ColumnOptionDef {
 impl Spanned for TableConstraint {
     fn span(&self) -> Span {
         match self {
-            TableConstraint::Unique {
-                name,
-                index_name,
-                index_type_display: _,
-                index_type: _,
-                columns,
-                index_options: _,
-                characteristics,
-                nulls_distinct: _,
-            } => union_spans(
-                name.iter()
-                    .map(|i| i.span)
-                    .chain(index_name.iter().map(|i| i.span))
-                    .chain(columns.iter().map(|i| i.span))
-                    .chain(characteristics.iter().map(|i| i.span())),
-            ),
-            TableConstraint::PrimaryKey {
-                name,
-                index_name,
-                index_type: _,
-                columns,
-                index_options: _,
-                characteristics,
-            } => union_spans(
-                name.iter()
-                    .map(|i| i.span)
-                    .chain(index_name.iter().map(|i| i.span))
-                    .chain(columns.iter().map(|i| i.span))
-                    .chain(characteristics.iter().map(|i| i.span())),
-            ),
-            TableConstraint::ForeignKey {
-                name,
-                columns,
-                index_name,
-                foreign_table,
-                referred_columns,
-                on_delete,
-                on_update,
-                characteristics,
-            } => union_spans(
-                name.iter()
-                    .map(|i| i.span)
-                    .chain(index_name.iter().map(|i| i.span))
-                    .chain(columns.iter().map(|i| i.span))
-                    .chain(core::iter::once(foreign_table.span()))
-                    .chain(referred_columns.iter().map(|i| i.span))
-                    .chain(on_delete.iter().map(|i| i.span()))
-                    .chain(on_update.iter().map(|i| i.span()))
-                    .chain(characteristics.iter().map(|i| i.span())),
-            ),
-            TableConstraint::Check {
-                name,
-                expr,
-                enforced: _,
-            } => expr.span().union_opt(&name.as_ref().map(|i| i.span)),
-            TableConstraint::Index {
-                display_as_key: _,
-                name,
-                index_type: _,
-                columns,
-            } => union_spans(
-                name.iter()
-                    .map(|i| i.span)
-                    .chain(columns.iter().map(|i| i.span)),
-            ),
-            TableConstraint::FulltextOrSpatial {
-                fulltext: _,
-                index_type_display: _,
-                opt_index_name,
-                columns,
-            } => union_spans(
-                opt_index_name
-                    .iter()
-                    .map(|i| i.span)
-                    .chain(columns.iter().map(|i| i.span)),
-            ),
+            TableConstraint::Unique(constraint) => constraint.span(),
+            TableConstraint::PrimaryKey(constraint) => constraint.span(),
+            TableConstraint::ForeignKey(constraint) => constraint.span(),
+            TableConstraint::Check(constraint) => constraint.span(),
+            TableConstraint::Index(constraint) => constraint.span(),
+            TableConstraint::FulltextOrSpatial(constraint) => constraint.span(),
         }
     }
 }
@@ -731,6 +646,8 @@ impl Spanned for CreateIndex {
             nulls_distinct: _, // bool
             with,
             predicate,
+            index_options: _,
+            alter_options,
         } = self;
 
         union_spans(
@@ -740,8 +657,15 @@ impl Spanned for CreateIndex {
                 .chain(columns.iter().map(|i| i.column.span()))
                 .chain(include.iter().map(|i| i.span))
                 .chain(with.iter().map(|i| i.span()))
-                .chain(predicate.iter().map(|i| i.span())),
+                .chain(predicate.iter().map(|i| i.span()))
+                .chain(alter_options.iter().map(|i| i.span())),
         )
+    }
+}
+
+impl Spanned for IndexColumn {
+    fn span(&self) -> Span {
+        self.column.span()
     }
 }
 
@@ -837,7 +761,8 @@ impl Spanned for RaiseStatementValue {
 /// - [ColumnOption::Null]
 /// - [ColumnOption::NotNull]
 /// - [ColumnOption::Comment]
-/// - [ColumnOption::Unique]¨
+/// - [ColumnOption::PrimaryKey]
+/// - [ColumnOption::Unique]
 /// - [ColumnOption::DialectSpecific]
 /// - [ColumnOption::Generated]
 impl Spanned for ColumnOption {
@@ -849,21 +774,10 @@ impl Spanned for ColumnOption {
             ColumnOption::Materialized(expr) => expr.span(),
             ColumnOption::Ephemeral(expr) => expr.as_ref().map_or(Span::empty(), |e| e.span()),
             ColumnOption::Alias(expr) => expr.span(),
-            ColumnOption::Unique { .. } => Span::empty(),
-            ColumnOption::ForeignKey {
-                foreign_table,
-                referred_columns,
-                on_delete,
-                on_update,
-                characteristics,
-            } => union_spans(
-                core::iter::once(foreign_table.span())
-                    .chain(referred_columns.iter().map(|i| i.span))
-                    .chain(on_delete.iter().map(|i| i.span()))
-                    .chain(on_update.iter().map(|i| i.span()))
-                    .chain(characteristics.iter().map(|i| i.span())),
-            ),
-            ColumnOption::Check(expr) => expr.span(),
+            ColumnOption::PrimaryKey(constraint) => constraint.span(),
+            ColumnOption::Unique(constraint) => constraint.span(),
+            ColumnOption::Check(constraint) => constraint.span(),
+            ColumnOption::ForeignKey(constraint) => constraint.span(),
             ColumnOption::DialectSpecific(_) => Span::empty(),
             ColumnOption::CharacterSet(object_name) => object_name.span(),
             ColumnOption::Collation(object_name) => object_name.span(),
@@ -876,6 +790,7 @@ impl Spanned for ColumnOption {
             ColumnOption::Policy(..) => Span::empty(),
             ColumnOption::Tags(..) => Span::empty(),
             ColumnOption::Srid(..) => Span::empty(),
+            ColumnOption::Invisible => Span::empty(),
         }
     }
 }
@@ -900,6 +815,20 @@ impl Spanned for ConstraintCharacteristics {
     }
 }
 
+impl Spanned for Analyze {
+    fn span(&self) -> Span {
+        union_spans(
+            core::iter::once(self.table_name.span())
+                .chain(
+                    self.partitions
+                        .iter()
+                        .flat_map(|i| i.iter().map(|k| k.span())),
+                )
+                .chain(self.columns.iter().map(|i| i.span)),
+        )
+    }
+}
+
 /// # partial span
 ///
 /// Missing spans:
@@ -917,6 +846,7 @@ impl Spanned for AlterColumnOperation {
             AlterColumnOperation::SetDataType {
                 data_type: _,
                 using,
+                had_set: _,
             } => using.as_ref().map_or(Span::empty(), |u| u.span()),
             AlterColumnOperation::AddGenerated { .. } => Span::empty(),
         }
@@ -940,6 +870,7 @@ impl Spanned for CopySource {
 impl Spanned for Delete {
     fn span(&self) -> Span {
         let Delete {
+            delete_token,
             tables,
             from,
             using,
@@ -950,18 +881,45 @@ impl Spanned for Delete {
         } = self;
 
         union_spans(
-            tables
-                .iter()
-                .map(|i| i.span())
-                .chain(core::iter::once(from.span()))
-                .chain(
-                    using
-                        .iter()
-                        .map(|u| union_spans(u.iter().map(|i| i.span()))),
-                )
+            core::iter::once(delete_token.0.span).chain(
+                tables
+                    .iter()
+                    .map(|i| i.span())
+                    .chain(core::iter::once(from.span()))
+                    .chain(
+                        using
+                            .iter()
+                            .map(|u| union_spans(u.iter().map(|i| i.span()))),
+                    )
+                    .chain(selection.iter().map(|i| i.span()))
+                    .chain(returning.iter().flat_map(|i| i.iter().map(|k| k.span())))
+                    .chain(order_by.iter().map(|i| i.span()))
+                    .chain(limit.iter().map(|i| i.span())),
+            ),
+        )
+    }
+}
+
+impl Spanned for Update {
+    fn span(&self) -> Span {
+        let Update {
+            update_token,
+            table,
+            assignments,
+            from,
+            selection,
+            returning,
+            or: _,
+            limit,
+        } = self;
+
+        union_spans(
+            core::iter::once(table.span())
+                .chain(core::iter::once(update_token.0.span))
+                .chain(assignments.iter().map(|i| i.span()))
+                .chain(from.iter().map(|i| i.span()))
                 .chain(selection.iter().map(|i| i.span()))
                 .chain(returning.iter().flat_map(|i| i.iter().map(|k| k.span())))
-                .chain(order_by.iter().map(|i| i.span()))
                 .chain(limit.iter().map(|i| i.span())),
         )
     }
@@ -984,10 +942,13 @@ impl Spanned for ViewColumnDef {
             options,
         } = self;
 
-        union_spans(
-            core::iter::once(name.span)
-                .chain(options.iter().flat_map(|i| i.iter().map(|k| k.span()))),
-        )
+        name.span.union_opt(&options.as_ref().map(|o| o.span()))
+    }
+}
+
+impl Spanned for ColumnOptions {
+    fn span(&self) -> Span {
+        union_spans(self.as_slice().iter().map(|i| i.span()))
     }
 }
 
@@ -1048,7 +1009,9 @@ impl Spanned for CreateTableOptions {
         match self {
             CreateTableOptions::None => Span::empty(),
             CreateTableOptions::With(vec) => union_spans(vec.iter().map(|i| i.span())),
-            CreateTableOptions::Options(vec) => union_spans(vec.iter().map(|i| i.span())),
+            CreateTableOptions::Options(vec) => {
+                union_spans(vec.as_slice().iter().map(|i| i.span()))
+            }
             CreateTableOptions::Plain(vec) => union_spans(vec.iter().map(|i| i.span())),
             CreateTableOptions::TableProperties(vec) => union_spans(vec.iter().map(|i| i.span())),
         }
@@ -1062,7 +1025,10 @@ impl Spanned for CreateTableOptions {
 impl Spanned for AlterTableOperation {
     fn span(&self) -> Span {
         match self {
-            AlterTableOperation::AddConstraint(table_constraint) => table_constraint.span(),
+            AlterTableOperation::AddConstraint {
+                constraint,
+                not_valid: _,
+            } => constraint.span(),
             AlterTableOperation::AddColumn {
                 column_keyword: _,
                 if_not_exists: _,
@@ -1095,10 +1061,10 @@ impl Spanned for AlterTableOperation {
             } => name.span,
             AlterTableOperation::DropColumn {
                 has_column_keyword: _,
-                column_name,
+                column_names,
                 if_exists: _,
                 drop_behavior: _,
-            } => column_name.span,
+            } => union_spans(column_names.iter().map(|i| i.span)),
             AlterTableOperation::AttachPartition { partition } => partition.span(),
             AlterTableOperation::DetachPartition { partition } => partition.span(),
             AlterTableOperation::FreezePartition {
@@ -1113,8 +1079,8 @@ impl Spanned for AlterTableOperation {
             } => partition
                 .span()
                 .union_opt(&with_name.as_ref().map(|n| n.span)),
-            AlterTableOperation::DropPrimaryKey => Span::empty(),
-            AlterTableOperation::DropForeignKey { name } => name.span,
+            AlterTableOperation::DropPrimaryKey { .. } => Span::empty(),
+            AlterTableOperation::DropForeignKey { name, .. } => name.span,
             AlterTableOperation::DropIndex { name } => name.span,
             AlterTableOperation::EnableAlwaysRule { name } => name.span,
             AlterTableOperation::EnableAlwaysTrigger { name } => name.span,
@@ -1179,10 +1145,17 @@ impl Spanned for AlterTableOperation {
             AlterTableOperation::DropClusteringKey => Span::empty(),
             AlterTableOperation::SuspendRecluster => Span::empty(),
             AlterTableOperation::ResumeRecluster => Span::empty(),
+            AlterTableOperation::Refresh => Span::empty(),
+            AlterTableOperation::Suspend => Span::empty(),
+            AlterTableOperation::Resume => Span::empty(),
             AlterTableOperation::Algorithm { .. } => Span::empty(),
             AlterTableOperation::AutoIncrement { value, .. } => value.span(),
             AlterTableOperation::Lock { .. } => Span::empty(),
             AlterTableOperation::ReplicaIdentity { .. } => Span::empty(),
+            AlterTableOperation::ValidateConstraint { name } => name.span,
+            AlterTableOperation::SetOptionsParens { options } => {
+                union_spans(options.iter().map(|i| i.span()))
+            }
         }
     }
 }
@@ -1280,6 +1253,7 @@ impl Spanned for AlterIndexOperation {
 impl Spanned for Insert {
     fn span(&self) -> Span {
         let Insert {
+            insert_token,
             or: _,     // enum, sqlite specific
             ignore: _, // bool
             into: _,   // bool
@@ -1302,7 +1276,8 @@ impl Spanned for Insert {
         } = self;
 
         union_spans(
-            core::iter::once(table.span())
+            core::iter::once(insert_token.0.span)
+                .chain(core::iter::once(table.span()))
                 .chain(table_alias.as_ref().map(|i| i.span))
                 .chain(columns.iter().map(|i| i.span))
                 .chain(source.as_ref().map(|q| q.span()))
@@ -1398,7 +1373,6 @@ impl Spanned for AssignmentTarget {
 /// f.e. `IS NULL <expr>` reports as `<expr>::span`.
 ///
 /// Missing spans:
-/// - [Expr::TypedString] # missing span for data_type
 /// - [Expr::MatchAgainst] # MySQL specific
 /// - [Expr::RLike] # MySQL specific
 /// - [Expr::Struct] # BigQuery specific
@@ -1498,7 +1472,7 @@ impl Spanned for Expr {
                 .union(&union_spans(collation.0.iter().map(|i| i.span()))),
             Expr::Nested(expr) => expr.span(),
             Expr::Value(value) => value.span(),
-            Expr::TypedString { value, .. } => value.span(),
+            Expr::TypedString(TypedString { value, .. }) => value.span(),
             Expr::Function(function) => function.span(),
             Expr::GroupingSets(vec) => {
                 union_spans(vec.iter().flat_map(|i| i.iter().map(|k| k.span())))
@@ -1612,6 +1586,7 @@ impl Spanned for Expr {
             Expr::OuterJoin(expr) => expr.span(),
             Expr::Prior(expr) => expr.span(),
             Expr::Lambda(_) => Span::empty(),
+            Expr::MemberOf(member_of) => member_of.value.span().union(&member_of.array.span()),
         }
     }
 }
@@ -1658,6 +1633,10 @@ impl Spanned for ObjectNamePart {
     fn span(&self) -> Span {
         match self {
             ObjectNamePart::Identifier(ident) => ident.span,
+            ObjectNamePart::Function(func) => func
+                .name
+                .span
+                .union(&union_spans(func.args.iter().map(|i| i.span()))),
         }
     }
 }
@@ -1738,6 +1717,7 @@ impl Spanned for FunctionArgumentClause {
             FunctionArgumentClause::Having(HavingBound(_kind, expr)) => expr.span(),
             FunctionArgumentClause::Separator(value) => value.span(),
             FunctionArgumentClause::JsonNullClause(_) => Span::empty(),
+            FunctionArgumentClause::JsonReturningClause(_) => Span::empty(),
         }
     }
 }
@@ -1958,7 +1938,7 @@ impl Spanned for TableFactor {
             } => union_spans(
                 core::iter::once(table.span())
                     .chain(aggregate_functions.iter().map(|i| i.span()))
-                    .chain(value_column.iter().map(|i| i.span))
+                    .chain(value_column.iter().map(|i| i.span()))
                     .chain(core::iter::once(value_source.span()))
                     .chain(default_on_null.as_ref().map(|i| i.span()))
                     .chain(alias.as_ref().map(|i| i.span())),
@@ -1972,9 +1952,9 @@ impl Spanned for TableFactor {
                 alias,
             } => union_spans(
                 core::iter::once(table.span())
-                    .chain(core::iter::once(value.span))
+                    .chain(core::iter::once(value.span()))
                     .chain(core::iter::once(name.span))
-                    .chain(columns.iter().map(|i| i.span))
+                    .chain(columns.iter().map(|ilist| ilist.span()))
                     .chain(alias.as_ref().map(|alias| alias.span())),
             ),
             TableFactor::MatchRecognize {
@@ -1995,6 +1975,23 @@ impl Spanned for TableFactor {
                     .chain(core::iter::once(pattern.span()))
                     .chain(symbols.iter().map(|i| i.span()))
                     .chain(alias.as_ref().map(|i| i.span())),
+            ),
+            TableFactor::SemanticView {
+                name,
+                dimensions,
+                metrics,
+                facts,
+                where_clause,
+                alias,
+            } => union_spans(
+                name.0
+                    .iter()
+                    .map(|i| i.span())
+                    .chain(dimensions.iter().map(|d| d.span()))
+                    .chain(metrics.iter().map(|m| m.span()))
+                    .chain(facts.iter().map(|f| f.span()))
+                    .chain(where_clause.as_ref().map(|e| e.span()))
+                    .chain(alias.as_ref().map(|a| a.span())),
             ),
             TableFactor::OpenJsonTable { .. } => Span::empty(),
         }
@@ -2103,9 +2100,12 @@ impl Spanned for FunctionArgExpr {
 
 impl Spanned for TableAlias {
     fn span(&self) -> Span {
-        let TableAlias { name, columns } = self;
-
-        union_spans(iter::once(name.span).chain(columns.iter().map(|i| i.span())))
+        let TableAlias {
+            explicit: _,
+            name,
+            columns,
+        } = self;
+        union_spans(core::iter::once(name.span).chain(columns.iter().map(Spanned::span)))
     }
 }
 
@@ -2158,7 +2158,7 @@ impl Spanned for JoinOperator {
             JoinOperator::Right(join_constraint) => join_constraint.span(),
             JoinOperator::RightOuter(join_constraint) => join_constraint.span(),
             JoinOperator::FullOuter(join_constraint) => join_constraint.span(),
-            JoinOperator::CrossJoin => Span::empty(),
+            JoinOperator::CrossJoin(join_constraint) => join_constraint.span(),
             JoinOperator::LeftSemi(join_constraint) => join_constraint.span(),
             JoinOperator::RightSemi(join_constraint) => join_constraint.span(),
             JoinOperator::LeftAnti(join_constraint) => join_constraint.span(),
@@ -2207,6 +2207,7 @@ impl Spanned for Select {
             distinct: _, // todo
             top: _,      // todo, mysql specific
             projection,
+            exclude: _,
             into,
             from,
             lateral_views,
@@ -2343,11 +2344,146 @@ impl Spanned for OpenStatement {
     }
 }
 
+impl Spanned for AlterSchemaOperation {
+    fn span(&self) -> Span {
+        match self {
+            AlterSchemaOperation::SetDefaultCollate { collate } => collate.span(),
+            AlterSchemaOperation::AddReplica { replica, options } => union_spans(
+                core::iter::once(replica.span)
+                    .chain(options.iter().flat_map(|i| i.iter().map(|i| i.span()))),
+            ),
+            AlterSchemaOperation::DropReplica { replica } => replica.span,
+            AlterSchemaOperation::SetOptionsParens { options } => {
+                union_spans(options.iter().map(|i| i.span()))
+            }
+            AlterSchemaOperation::Rename { name } => name.span(),
+            AlterSchemaOperation::OwnerTo { owner } => {
+                if let Owner::Ident(ident) = owner {
+                    ident.span
+                } else {
+                    Span::empty()
+                }
+            }
+        }
+    }
+}
+
+impl Spanned for AlterSchema {
+    fn span(&self) -> Span {
+        union_spans(
+            core::iter::once(self.name.span()).chain(self.operations.iter().map(|i| i.span())),
+        )
+    }
+}
+
+impl Spanned for CreateView {
+    fn span(&self) -> Span {
+        union_spans(
+            core::iter::once(self.name.span())
+                .chain(self.columns.iter().map(|i| i.span()))
+                .chain(core::iter::once(self.query.span()))
+                .chain(core::iter::once(self.options.span()))
+                .chain(self.cluster_by.iter().map(|i| i.span))
+                .chain(self.to.iter().map(|i| i.span())),
+        )
+    }
+}
+
+impl Spanned for AlterTable {
+    fn span(&self) -> Span {
+        union_spans(
+            core::iter::once(self.name.span())
+                .chain(self.operations.iter().map(|i| i.span()))
+                .chain(self.on_cluster.iter().map(|i| i.span))
+                .chain(core::iter::once(self.end_token.0.span)),
+        )
+    }
+}
+
+impl Spanned for CreateOperator {
+    fn span(&self) -> Span {
+        Span::empty()
+    }
+}
+
+impl Spanned for CreateOperatorFamily {
+    fn span(&self) -> Span {
+        Span::empty()
+    }
+}
+
+impl Spanned for CreateOperatorClass {
+    fn span(&self) -> Span {
+        Span::empty()
+    }
+}
+
+impl Spanned for MergeClause {
+    fn span(&self) -> Span {
+        union_spans([self.when_token.0.span, self.action.span()].into_iter())
+    }
+}
+
+impl Spanned for MergeAction {
+    fn span(&self) -> Span {
+        match self {
+            MergeAction::Insert(expr) => expr.span(),
+            MergeAction::Update {
+                update_token,
+                assignments,
+            } => union_spans(
+                core::iter::once(update_token.0.span).chain(assignments.iter().map(Spanned::span)),
+            ),
+            MergeAction::Delete { delete_token } => delete_token.0.span,
+        }
+    }
+}
+
+impl Spanned for MergeInsertExpr {
+    fn span(&self) -> Span {
+        union_spans(
+            [
+                self.insert_token.0.span,
+                self.kind_token.0.span,
+                match self.kind {
+                    MergeInsertKind::Values(ref values) => values.span(),
+                    MergeInsertKind::Row => Span::empty(), // ~ covered by `kind_token`
+                },
+            ]
+            .into_iter()
+            .chain(self.columns.iter().map(|i| i.span)),
+        )
+    }
+}
+
+impl Spanned for OutputClause {
+    fn span(&self) -> Span {
+        match self {
+            OutputClause::Output {
+                output_token,
+                select_items,
+                into_table,
+            } => union_spans(
+                core::iter::once(output_token.0.span)
+                    .chain(into_table.iter().map(Spanned::span))
+                    .chain(select_items.iter().map(Spanned::span)),
+            ),
+            OutputClause::Returning {
+                returning_token,
+                select_items,
+            } => union_spans(
+                core::iter::once(returning_token.0.span)
+                    .chain(select_items.iter().map(Spanned::span)),
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::dialect::{Dialect, GenericDialect, SnowflakeDialect};
     use crate::parser::Parser;
-    use crate::tokenizer::Span;
+    use crate::tokenizer::{Location, Span};
 
     use super::*;
 
@@ -2493,5 +2629,319 @@ pub mod tests {
             test.get_source(expr_span),
             "CASE 1 WHEN 2 THEN 3 ELSE 4 END"
         );
+    }
+
+    #[test]
+    fn test_placeholder_span() {
+        let sql = "\nSELECT\n  :fooBar";
+        let r = Parser::parse_sql(&GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+        match &r[0] {
+            Statement::Query(q) => {
+                let col = &q.body.as_select().unwrap().projection[0];
+                match col {
+                    SelectItem::UnnamedExpr(Expr::Value(ValueWithSpan {
+                        value: Value::Placeholder(s),
+                        span,
+                    })) => {
+                        assert_eq!(":fooBar", s);
+                        assert_eq!(&Span::new((3, 3).into(), (3, 10).into()), span);
+                    }
+                    _ => panic!("expected unnamed expression; got {col:?}"),
+                }
+            }
+            stmt => panic!("expected query; got {stmt:?}"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_multiline_span() {
+        let sql = r#"-- foo
+ALTER TABLE users
+  ADD COLUMN foo
+  varchar; -- hi there"#;
+
+        let r = Parser::parse_sql(&crate::dialect::PostgreSqlDialect {}, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        let stmt_span = r[0].span();
+
+        assert_eq!(stmt_span.start, (2, 13).into());
+        assert_eq!(stmt_span.end, (4, 11).into());
+    }
+
+    #[test]
+    fn test_update_statement_span() {
+        let sql = r#"-- foo
+      UPDATE foo
+   /* bar */
+   SET bar = 3
+ WHERE quux > 42 ;
+"#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        let stmt_span = r[0].span();
+
+        assert_eq!(stmt_span.start, (2, 7).into());
+        assert_eq!(stmt_span.end, (5, 17).into());
+    }
+
+    #[test]
+    fn test_insert_statement_span() {
+        let sql = r#"
+/* foo */ INSERT  INTO  FOO  (X, Y, Z)
+  SELECT 1, 2, 3
+  FROM DUAL
+;"#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        let stmt_span = r[0].span();
+
+        assert_eq!(stmt_span.start, (2, 11).into());
+        assert_eq!(stmt_span.end, (4, 12).into());
+    }
+
+    #[test]
+    fn test_replace_statement_span() {
+        let sql = r#"
+/* foo */ REPLACE INTO
+    cities(name,population)
+SELECT
+    name,
+    population
+FROM
+   cities
+WHERE id = 1
+;"#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        dbg!(&r[0]);
+
+        let stmt_span = r[0].span();
+
+        assert_eq!(stmt_span.start, (2, 11).into());
+        assert_eq!(stmt_span.end, (9, 13).into());
+    }
+
+    #[test]
+    fn test_delete_statement_span() {
+        let sql = r#"-- foo
+      DELETE /* quux */
+        FROM foo
+       WHERE foo.x = 42
+;"#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        let stmt_span = r[0].span();
+
+        assert_eq!(stmt_span.start, (2, 7).into());
+        assert_eq!(stmt_span.end, (4, 24).into());
+    }
+
+    #[test]
+    fn test_merge_statement_spans() {
+        let sql = r#"
+        -- plain merge statement; no RETURNING, no OUTPUT
+
+        MERGE INTO target_table USING source_table
+                ON target_table.id = source_table.oooid
+
+        /* an inline comment */ WHEN NOT MATCHED THEN
+            INSERT (ID, description)
+               VALUES (source_table.id, source_table.description)
+
+            -- another one
+                WHEN MATCHED AND target_table.x = 'X' THEN
+            UPDATE SET target_table.description = source_table.description
+
+              WHEN MATCHED AND target_table.x != 'X' THEN   DELETE
+        WHEN NOT MATCHED AND 1 THEN INSERT (product, quantity) ROW 
+        "#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        // ~ assert the span of the whole statement
+        let stmt_span = r[0].span();
+        assert_eq!(stmt_span.start, (4, 9).into());
+        assert_eq!(stmt_span.end, (16, 67).into());
+
+        // ~ individual tokens within the statement
+        let Statement::Merge {
+            merge_token,
+            into: _,
+            table: _,
+            source: _,
+            on: _,
+            clauses,
+            output,
+        } = &r[0]
+        else {
+            panic!("not a MERGE statement");
+        };
+        assert_eq!(
+            merge_token.0.span,
+            Span::new(Location::new(4, 9), Location::new(4, 14))
+        );
+        assert_eq!(clauses.len(), 4);
+
+        // ~ the INSERT clause's TOKENs
+        assert_eq!(
+            clauses[0].when_token.0.span,
+            Span::new(Location::new(7, 33), Location::new(7, 37))
+        );
+        if let MergeAction::Insert(MergeInsertExpr {
+            insert_token,
+            kind_token,
+            ..
+        }) = &clauses[0].action
+        {
+            assert_eq!(
+                insert_token.0.span,
+                Span::new(Location::new(8, 13), Location::new(8, 19))
+            );
+            assert_eq!(
+                kind_token.0.span,
+                Span::new(Location::new(9, 16), Location::new(9, 22))
+            );
+        } else {
+            panic!("not a MERGE INSERT clause");
+        }
+
+        // ~ the UPDATE token(s)
+        assert_eq!(
+            clauses[1].when_token.0.span,
+            Span::new(Location::new(12, 17), Location::new(12, 21))
+        );
+        if let MergeAction::Update {
+            update_token,
+            assignments: _,
+        } = &clauses[1].action
+        {
+            assert_eq!(
+                update_token.0.span,
+                Span::new(Location::new(13, 13), Location::new(13, 19))
+            );
+        } else {
+            panic!("not a MERGE UPDATE clause");
+        }
+
+        // the DELETE token(s)
+        assert_eq!(
+            clauses[2].when_token.0.span,
+            Span::new(Location::new(15, 15), Location::new(15, 19))
+        );
+        if let MergeAction::Delete { delete_token } = &clauses[2].action {
+            assert_eq!(
+                delete_token.0.span,
+                Span::new(Location::new(15, 61), Location::new(15, 67))
+            );
+        } else {
+            panic!("not a MERGE DELETE clause");
+        }
+
+        // ~ an INSERT clause's ROW token
+        assert_eq!(
+            clauses[3].when_token.0.span,
+            Span::new(Location::new(16, 9), Location::new(16, 13))
+        );
+        if let MergeAction::Insert(MergeInsertExpr {
+            insert_token,
+            kind_token,
+            ..
+        }) = &clauses[3].action
+        {
+            assert_eq!(
+                insert_token.0.span,
+                Span::new(Location::new(16, 37), Location::new(16, 43))
+            );
+            assert_eq!(
+                kind_token.0.span,
+                Span::new(Location::new(16, 64), Location::new(16, 67))
+            );
+        } else {
+            panic!("not a MERGE INSERT clause");
+        }
+
+        assert!(output.is_none());
+    }
+
+    #[test]
+    fn test_merge_statement_spans_with_returning() {
+        let sql = r#"
+    MERGE INTO wines AS w
+    USING wine_stock_changes AS s
+        ON s.winename = w.winename
+    WHEN NOT MATCHED AND s.stock_delta > 0 THEN INSERT VALUES (s.winename, s.stock_delta)
+    WHEN MATCHED AND w.stock + s.stock_delta > 0 THEN UPDATE SET stock = w.stock + s.stock_delta
+    WHEN MATCHED THEN DELETE
+    RETURNING merge_action(), w.*
+        "#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        // ~ assert the span of the whole statement
+        let stmt_span = r[0].span();
+        assert_eq!(
+            stmt_span,
+            Span::new(Location::new(2, 5), Location::new(8, 34))
+        );
+
+        // ~ individual tokens within the statement
+        if let Statement::Merge { output, .. } = &r[0] {
+            if let Some(OutputClause::Returning {
+                returning_token, ..
+            }) = output
+            {
+                assert_eq!(
+                    returning_token.0.span,
+                    Span::new(Location::new(8, 5), Location::new(8, 14))
+                );
+            } else {
+                panic!("unexpected MERGE output clause");
+            }
+        } else {
+            panic!("not a MERGE statement");
+        };
+    }
+
+    #[test]
+    fn test_merge_statement_spans_with_output() {
+        let sql = r#"MERGE INTO a USING b ON a.id = b.id
+        WHEN MATCHED THEN DELETE
+              OUTPUT inserted.*"#;
+
+        let r = Parser::parse_sql(&crate::dialect::GenericDialect, sql).unwrap();
+        assert_eq!(1, r.len());
+
+        // ~ assert the span of the whole statement
+        let stmt_span = r[0].span();
+        assert_eq!(
+            stmt_span,
+            Span::new(Location::new(1, 1), Location::new(3, 32))
+        );
+
+        // ~ individual tokens within the statement
+        if let Statement::Merge { output, .. } = &r[0] {
+            if let Some(OutputClause::Output { output_token, .. }) = output {
+                assert_eq!(
+                    output_token.0.span,
+                    Span::new(Location::new(3, 15), Location::new(3, 21))
+                );
+            } else {
+                panic!("unexpected MERGE output clause");
+            }
+        } else {
+            panic!("not a MERGE statement");
+        };
     }
 }

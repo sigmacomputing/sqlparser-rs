@@ -65,8 +65,13 @@ impl Dialect for DuckDbDialect {
         true
     }
 
-    /// See <https://duckdb.org/docs/sql/functions/lambda.html>
+    /// See <https://duckdb.org/docs/stable/sql/functions/lambda>
     fn supports_lambda_functions(&self) -> bool {
+        true
+    }
+
+    /// Returns true if this dialect allows the `EXTRACT` function to use single quotes in the part being extracted.
+    fn allow_extract_single_quotes(&self) -> bool {
         true
     }
 
@@ -92,6 +97,16 @@ impl Dialect for DuckDbDialect {
 
     /// See DuckDB <https://duckdb.org/docs/sql/query_syntax/orderby.html#order-by-all-examples>
     fn supports_order_by_all(&self) -> bool {
+        true
+    }
+
+    fn supports_select_wildcard_exclude(&self) -> bool {
+        true
+    }
+
+    /// DuckDB supports `NOTNULL` as an alias for `IS NOT NULL`,
+    /// see DuckDB Comparisons <https://duckdb.org/docs/stable/sql/expressions/comparison_operators#between-and-is-not-null>
+    fn supports_notnull_operator(&self) -> bool {
         true
     }
 }

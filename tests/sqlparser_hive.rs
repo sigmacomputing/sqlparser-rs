@@ -408,10 +408,13 @@ fn parse_create_function() {
             assert_eq!(name.to_string(), "mydb.myfunc");
             assert_eq!(
                 function_body,
-                Some(CreateFunctionBody::AsBeforeOptions(Expr::Value(
-                    (Value::SingleQuotedString("org.random.class.Name".to_string()))
-                        .with_empty_span()
-                )))
+                Some(CreateFunctionBody::AsBeforeOptions {
+                    body: Expr::Value(
+                        (Value::SingleQuotedString("org.random.class.Name".to_string()))
+                            .with_empty_span()
+                    ),
+                    link_symbol: None,
+                })
             );
             assert_eq!(
                 using,
@@ -524,7 +527,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            hive().verified_stmt(&format!("USE {}", object_name)),
+            hive().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -532,7 +535,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                hive().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                hive().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),

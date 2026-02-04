@@ -80,12 +80,14 @@ impl Dialect for RedshiftSqlDialect {
     }
 
     fn is_identifier_start(&self, ch: char) -> bool {
-        // Extends Postgres dialect with sharp
+        // UTF-8 multibyte characters are supported in identifiers via the PostgreSqlDialect.
+        // https://docs.aws.amazon.com/redshift/latest/dg/r_names.html
         PostgreSqlDialect {}.is_identifier_start(ch) || ch == '#'
     }
 
     fn is_identifier_part(&self, ch: char) -> bool {
-        // Extends Postgres dialect with sharp
+        // UTF-8 multibyte characters are supported in identifiers via the PostgreSqlDialect.
+        // https://docs.aws.amazon.com/redshift/latest/dg/r_names.html
         PostgreSqlDialect {}.is_identifier_part(ch) || ch == '#'
     }
 
@@ -127,6 +129,18 @@ impl Dialect for RedshiftSqlDialect {
     }
 
     fn supports_string_literal_backslash_escape(&self) -> bool {
+        true
+    }
+
+    fn supports_select_wildcard_exclude(&self) -> bool {
+        true
+    }
+
+    fn supports_select_exclude(&self) -> bool {
+        true
+    }
+
+    fn supports_create_table_like_parenthesized(&self) -> bool {
         true
     }
 }

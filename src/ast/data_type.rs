@@ -131,6 +131,11 @@ pub enum DataType {
     ///
     /// [1]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#exact-numeric-type
     Decimal(ExactNumberInfo),
+    /// [MySQL] unsigned decimal with optional precision and scale, e.g. DECIMAL UNSIGNED or DECIMAL(10,2) UNSIGNED.
+    /// Note: Using UNSIGNED with DECIMAL is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    DecimalUnsigned(ExactNumberInfo),
     /// [BigNumeric] type used in BigQuery.
     ///
     /// [BigNumeric]: https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#bignumeric_literals
@@ -143,8 +148,19 @@ pub enum DataType {
     ///
     /// [1]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#exact-numeric-type
     Dec(ExactNumberInfo),
-    /// Floating point with optional precision, e.g. FLOAT(8).
-    Float(Option<u64>),
+    /// [MySQL] unsigned decimal (DEC alias) with optional precision and scale, e.g. DEC UNSIGNED or DEC(10,2) UNSIGNED.
+    /// Note: Using UNSIGNED with DEC is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    DecUnsigned(ExactNumberInfo),
+    /// Floating point with optional precision and scale, e.g. FLOAT, FLOAT(8), or FLOAT(8,2).
+    Float(ExactNumberInfo),
+    /// [MySQL] unsigned floating point with optional precision and scale, e.g.
+    /// FLOAT UNSIGNED, FLOAT(10) UNSIGNED or FLOAT(10,2) UNSIGNED.
+    /// Note: Using UNSIGNED with FLOAT is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    FloatUnsigned(ExactNumberInfo),
     /// Tiny integer with optional display width, e.g. TINYINT or TINYINT(3).
     TinyInt(Option<u64>),
     /// Unsigned tiny integer with optional display width,
@@ -302,17 +318,32 @@ pub enum DataType {
     Float64,
     /// Floating point, e.g. REAL.
     Real,
+    /// [MySQL] unsigned real, e.g. REAL UNSIGNED.
+    /// Note: Using UNSIGNED with REAL is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    RealUnsigned,
     /// Float8 is an alias for Double in [PostgreSQL].
     ///
     /// [PostgreSQL]: https://www.postgresql.org/docs/current/datatype.html
     Float8,
     /// Double
     Double(ExactNumberInfo),
+    /// [MySQL] unsigned double precision with optional precision, e.g. DOUBLE UNSIGNED or DOUBLE(10,2) UNSIGNED.
+    /// Note: Using UNSIGNED with DOUBLE is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    DoubleUnsigned(ExactNumberInfo),
     /// Double Precision, see [SQL Standard], [PostgreSQL].
     ///
     /// [SQL Standard]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#approximate-numeric-type
     /// [PostgreSQL]: https://www.postgresql.org/docs/current/datatype-numeric.html
     DoublePrecision,
+    /// [MySQL] unsigned double precision, e.g. DOUBLE PRECISION UNSIGNED.
+    /// Note: Using UNSIGNED with DOUBLE PRECISION is deprecated in recent versions of MySQL.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html
+    DoublePrecisionUnsigned,
     /// Bool is an alias for Boolean, see [PostgreSQL].
     ///
     /// [PostgreSQL]: https://www.postgresql.org/docs/current/datatype.html
@@ -344,9 +375,18 @@ pub enum DataType {
     /// Databricks timestamp without time zone. See [1].
     ///
     /// [1]: https://docs.databricks.com/aws/en/sql/language-manual/data-types/timestamp-ntz-type
-    TimestampNtz,
+    TimestampNtz(Option<u64>),
     /// Interval type.
-    Interval,
+    Interval {
+        /// [PostgreSQL] fields specification like `INTERVAL YEAR TO MONTH`.
+        ///
+        /// [PostgreSQL]: https://www.postgresql.org/docs/17/datatype-datetime.html
+        fields: Option<IntervalFields>,
+        /// [PostgreSQL] subsecond precision like `INTERVAL HOUR TO SECOND(3)`
+        ///
+        /// [PostgreSQL]: https://www.postgresql.org/docs/17/datatype-datetime.html
+        precision: Option<u64>,
+    },
     /// JSON type.
     JSON,
     /// Binary JSON type.
@@ -446,6 +486,14 @@ pub enum DataType {
     ///
     /// [PostgreSQL]: https://www.postgresql.org/docs/9.5/functions-geometry.html
     GeometricType(GeometricTypeKind),
+    /// PostgreSQL text search vectors, see [PostgreSQL].
+    ///
+    /// [PostgreSQL]: https://www.postgresql.org/docs/17/datatype-textsearch.html
+    TsVector,
+    /// PostgreSQL text search query, see [PostgreSQL].
+    ///
+    /// [PostgreSQL]: https://www.postgresql.org/docs/17/datatype-textsearch.html
+    TsQuery,
 }
 
 impl fmt::Display for DataType {
@@ -480,12 +528,19 @@ impl fmt::Display for DataType {
             DataType::Decimal(info) => {
                 write!(f, "DECIMAL{info}")
             }
+            DataType::DecimalUnsigned(info) => {
+                write!(f, "DECIMAL{info} UNSIGNED")
+            }
             DataType::Dec(info) => {
                 write!(f, "DEC{info}")
             }
+            DataType::DecUnsigned(info) => {
+                write!(f, "DEC{info} UNSIGNED")
+            }
             DataType::BigNumeric(info) => write!(f, "BIGNUMERIC{info}"),
             DataType::BigDecimal(info) => write!(f, "BIGDECIMAL{info}"),
-            DataType::Float(size) => format_type_with_optional_length(f, "FLOAT", size, false),
+            DataType::Float(info) => write!(f, "FLOAT{info}"),
+            DataType::FloatUnsigned(info) => write!(f, "FLOAT{info} UNSIGNED"),
             DataType::TinyInt(zerofill) => {
                 format_type_with_optional_length(f, "TINYINT", zerofill, false)
             }
@@ -599,12 +654,15 @@ impl fmt::Display for DataType {
                 write!(f, "UNSIGNED INTEGER")
             }
             DataType::Real => write!(f, "REAL"),
+            DataType::RealUnsigned => write!(f, "REAL UNSIGNED"),
             DataType::Float4 => write!(f, "FLOAT4"),
             DataType::Float32 => write!(f, "Float32"),
             DataType::Float64 => write!(f, "FLOAT64"),
             DataType::Double(info) => write!(f, "DOUBLE{info}"),
+            DataType::DoubleUnsigned(info) => write!(f, "DOUBLE{info} UNSIGNED"),
             DataType::Float8 => write!(f, "FLOAT8"),
             DataType::DoublePrecision => write!(f, "DOUBLE PRECISION"),
+            DataType::DoublePrecisionUnsigned => write!(f, "DOUBLE PRECISION UNSIGNED"),
             DataType::Bool => write!(f, "BOOL"),
             DataType::Boolean => write!(f, "BOOLEAN"),
             DataType::Date => write!(f, "DATE"),
@@ -618,7 +676,9 @@ impl fmt::Display for DataType {
             DataType::Timestamp(precision, timezone_info) => {
                 format_datetime_precision_and_tz(f, "TIMESTAMP", precision, timezone_info)
             }
-            DataType::TimestampNtz => write!(f, "TIMESTAMP_NTZ"),
+            DataType::TimestampNtz(precision) => {
+                format_type_with_optional_length(f, "TIMESTAMP_NTZ", precision, false)
+            }
             DataType::Datetime64(precision, timezone) => {
                 format_clickhouse_datetime_precision_and_timezone(
                     f,
@@ -627,7 +687,16 @@ impl fmt::Display for DataType {
                     timezone,
                 )
             }
-            DataType::Interval => write!(f, "INTERVAL"),
+            DataType::Interval { fields, precision } => {
+                write!(f, "INTERVAL")?;
+                if let Some(fields) = fields {
+                    write!(f, " {fields}")?;
+                }
+                if let Some(precision) = precision {
+                    write!(f, "({precision})")?;
+                }
+                Ok(())
+            }
             DataType::JSON => write!(f, "JSON"),
             DataType::JSONB => write!(f, "JSONB"),
             DataType::Regclass => write!(f, "REGCLASS"),
@@ -658,7 +727,7 @@ impl fmt::Display for DataType {
             }
             DataType::Enum(vals, bits) => {
                 match bits {
-                    Some(bits) => write!(f, "ENUM{}", bits),
+                    Some(bits) => write!(f, "ENUM{bits}"),
                     None => write!(f, "ENUM"),
                 }?;
                 write!(f, "(")?;
@@ -706,16 +775,16 @@ impl fmt::Display for DataType {
             }
             // ClickHouse
             DataType::Nullable(data_type) => {
-                write!(f, "Nullable({})", data_type)
+                write!(f, "Nullable({data_type})")
             }
             DataType::FixedString(character_length) => {
-                write!(f, "FixedString({})", character_length)
+                write!(f, "FixedString({character_length})")
             }
             DataType::LowCardinality(data_type) => {
-                write!(f, "LowCardinality({})", data_type)
+                write!(f, "LowCardinality({data_type})")
             }
             DataType::Map(key_data_type, value_data_type) => {
-                write!(f, "Map({}, {})", key_data_type, value_data_type)
+                write!(f, "Map({key_data_type}, {value_data_type})")
             }
             DataType::Tuple(fields) => {
                 write!(f, "Tuple({})", display_comma_separated(fields))
@@ -737,7 +806,9 @@ impl fmt::Display for DataType {
             DataType::NamedTable { name, columns } => {
                 write!(f, "{} TABLE ({})", name, display_comma_separated(columns))
             }
-            DataType::GeometricType(kind) => write!(f, "{}", kind),
+            DataType::GeometricType(kind) => write!(f, "{kind}"),
+            DataType::TsVector => write!(f, "TSVECTOR"),
+            DataType::TsQuery => write!(f, "TSQUERY"),
         }
     }
 }
@@ -879,6 +950,48 @@ impl fmt::Display for TimezoneInfo {
     }
 }
 
+/// Fields for [Postgres] `INTERVAL` type.
+///
+/// [Postgres]: https://www.postgresql.org/docs/17/datatype-datetime.html
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum IntervalFields {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    YearToMonth,
+    DayToHour,
+    DayToMinute,
+    DayToSecond,
+    HourToMinute,
+    HourToSecond,
+    MinuteToSecond,
+}
+
+impl fmt::Display for IntervalFields {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IntervalFields::Year => write!(f, "YEAR"),
+            IntervalFields::Month => write!(f, "MONTH"),
+            IntervalFields::Day => write!(f, "DAY"),
+            IntervalFields::Hour => write!(f, "HOUR"),
+            IntervalFields::Minute => write!(f, "MINUTE"),
+            IntervalFields::Second => write!(f, "SECOND"),
+            IntervalFields::YearToMonth => write!(f, "YEAR TO MONTH"),
+            IntervalFields::DayToHour => write!(f, "DAY TO HOUR"),
+            IntervalFields::DayToMinute => write!(f, "DAY TO MINUTE"),
+            IntervalFields::DayToSecond => write!(f, "DAY TO SECOND"),
+            IntervalFields::HourToMinute => write!(f, "HOUR TO MINUTE"),
+            IntervalFields::HourToSecond => write!(f, "HOUR TO SECOND"),
+            IntervalFields::MinuteToSecond => write!(f, "MINUTE TO SECOND"),
+        }
+    }
+}
+
 /// Additional information for `NUMERIC`, `DECIMAL`, and `DEC` data types
 /// following the 2016 [SQL Standard].
 ///
@@ -892,7 +1005,7 @@ pub enum ExactNumberInfo {
     /// Only precision information, e.g. `DECIMAL(10)`
     Precision(u64),
     /// Precision and scale information, e.g. `DECIMAL(10,2)`
-    PrecisionAndScale(u64, u64),
+    PrecisionAndScale(u64, i64),
 }
 
 impl fmt::Display for ExactNumberInfo {
@@ -932,7 +1045,7 @@ impl fmt::Display for CharacterLength {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CharacterLength::IntegerLength { length, unit } => {
-                write!(f, "{}", length)?;
+                write!(f, "{length}")?;
                 if let Some(unit) = unit {
                     write!(f, " {unit}")?;
                 }
@@ -987,7 +1100,7 @@ impl fmt::Display for BinaryLength {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BinaryLength::IntegerLength { length } => {
-                write!(f, "{}", length)?;
+                write!(f, "{length}")?;
             }
             BinaryLength::Max => {
                 write!(f, "MAX")?;

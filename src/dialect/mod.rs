@@ -24,6 +24,7 @@ mod generic;
 mod hive;
 mod mssql;
 mod mysql;
+mod oracle;
 mod postgresql;
 mod redshift;
 mod snowflake;
@@ -45,11 +46,12 @@ pub use self::generic::GenericDialect;
 pub use self::hive::HiveDialect;
 pub use self::mssql::MsSqlDialect;
 pub use self::mysql::MySqlDialect;
+pub use self::oracle::OracleDialect;
 pub use self::postgresql::PostgreSqlDialect;
 pub use self::redshift::RedshiftSqlDialect;
 pub use self::snowflake::SnowflakeDialect;
 pub use self::sqlite::SQLiteDialect;
-use crate::ast::{ColumnOption, Expr, GranteesType, Statement};
+use crate::ast::{ColumnOption, Expr, GranteesType, Ident, ObjectNamePart, Statement};
 pub use crate::keywords;
 use crate::keywords::Keyword;
 use crate::parser::{Parser, ParserError};
@@ -278,8 +280,41 @@ pub trait Dialect: Debug + Any {
         false
     }
 
+    /// Indicates whether the dialect supports left-associative join parsing
+    /// by default when parentheses are omitted in nested joins.
+    ///
+    /// Most dialects (like MySQL or Postgres) assume **left-associative** precedence,
+    /// so a query like:
+    ///
+    /// ```sql
+    /// SELECT * FROM t1 NATURAL JOIN t5 INNER JOIN t0 ON ...
+    /// ```
+    /// is interpreted as:
+    /// ```sql
+    /// ((t1 NATURAL JOIN t5) INNER JOIN t0 ON ...)
+    /// ```
+    /// and internally represented as a **flat list** of joins.
+    ///
+    /// In contrast, some dialects (e.g. **Snowflake**) assume **right-associative**
+    /// precedence and interpret the same query as:
+    /// ```sql
+    /// (t1 NATURAL JOIN (t5 INNER JOIN t0 ON ...))
+    /// ```
+    /// which results in a **nested join** structure in the AST.
+    ///
+    /// If this method returns `false`, the parser must build nested join trees
+    /// even in the absence of parentheses to reflect the correct associativity
+    fn supports_left_associative_joins_without_parens(&self) -> bool {
+        true
+    }
+
     /// Returns true if the dialect supports the `(+)` syntax for OUTER JOIN.
     fn supports_outer_join_operator(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports a join specification on CROSS JOIN.
+    fn supports_cross_join_constraint(&self) -> bool {
         false
     }
 
@@ -448,6 +483,12 @@ pub trait Dialect: Debug + Any {
         false
     }
 
+    /// Returns true if the dialect supports concatenating of string literal
+    /// Example: `SELECT 'Hello ' "world" => SELECT 'Hello world'`
+    fn supports_string_literal_concatenation(&self) -> bool {
+        false
+    }
+
     /// Does the dialect support trailing commas in the projection list?
     fn supports_projection_trailing_commas(&self) -> bool {
         self.supports_trailing_commas()
@@ -542,6 +583,33 @@ pub trait Dialect: Debug + Any {
         false
     }
 
+    /// Returns true if the dialect supports an exclude option
+    /// following a wildcard in the projection section. For example:
+    /// `SELECT * EXCLUDE col1 FROM tbl`.
+    ///
+    /// [Redshift](https://docs.aws.amazon.com/redshift/latest/dg/r_EXCLUDE_list.html)
+    /// [Snowflake](https://docs.snowflake.com/en/sql-reference/sql/select)
+    fn supports_select_wildcard_exclude(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports an exclude option
+    /// as the last item in the projection section, not necessarily
+    /// after a wildcard. For example:
+    /// `SELECT *, c1, c2 EXCLUDE c3 FROM tbl`
+    ///
+    /// [Redshift](https://docs.aws.amazon.com/redshift/latest/dg/r_EXCLUDE_list.html)
+    fn supports_select_exclude(&self) -> bool {
+        false
+    }
+
+    /// Return true if the dialect supports specifying multiple options
+    /// in a `CREATE TABLE` statement for the structure of the new table. For example:
+    /// `CREATE TABLE t (a INT, b INT) AS SELECT 1 AS b, 2 AS a`
+    fn supports_create_table_multi_schema_info_sources(&self) -> bool {
+        false
+    }
+
     /// Dialect-specific infix parser override
     ///
     /// This method is called to parse the next infix expression.
@@ -587,7 +655,7 @@ pub trait Dialect: Debug + Any {
         }
 
         let token = parser.peek_token();
-        debug!("get_next_precedence_full() {:?}", token);
+        debug!("get_next_precedence_full() {token:?}");
         match token.token {
             Token::Word(w) if w.keyword == Keyword::OR => Ok(p!(Or)),
             Token::Word(w) if w.keyword == Keyword::AND => Ok(p!(And)),
@@ -621,8 +689,17 @@ pub trait Dialect: Debug + Any {
                 Token::Word(w) if w.keyword == Keyword::REGEXP => Ok(p!(Like)),
                 Token::Word(w) if w.keyword == Keyword::MATCH => Ok(p!(Like)),
                 Token::Word(w) if w.keyword == Keyword::SIMILAR => Ok(p!(Like)),
+                Token::Word(w) if w.keyword == Keyword::MEMBER => Ok(p!(Like)),
+                Token::Word(w)
+                    if w.keyword == Keyword::NULL && !parser.in_column_definition_state() =>
+                {
+                    Ok(p!(Is))
+                }
                 _ => Ok(self.prec_unknown()),
             },
+            Token::Word(w) if w.keyword == Keyword::NOTNULL && self.supports_notnull_operator() => {
+                Ok(p!(Is))
+            }
             Token::Word(w) if w.keyword == Keyword::IS => Ok(p!(Is)),
             Token::Word(w) if w.keyword == Keyword::IN => Ok(p!(Between)),
             Token::Word(w) if w.keyword == Keyword::BETWEEN => Ok(p!(Between)),
@@ -633,6 +710,7 @@ pub trait Dialect: Debug + Any {
             Token::Word(w) if w.keyword == Keyword::REGEXP => Ok(p!(Like)),
             Token::Word(w) if w.keyword == Keyword::MATCH => Ok(p!(Like)),
             Token::Word(w) if w.keyword == Keyword::SIMILAR => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::MEMBER => Ok(p!(Like)),
             Token::Word(w) if w.keyword == Keyword::OPERATOR => Ok(p!(Between)),
             Token::Word(w) if w.keyword == Keyword::DIV => Ok(p!(MulDivModOp)),
             Token::Period => Ok(p!(Period)),
@@ -903,12 +981,6 @@ pub trait Dialect: Debug + Any {
         keywords::RESERVED_FOR_IDENTIFIER.contains(&kw)
     }
 
-    /// Returns reserved keywords when looking to parse a `TableFactor`.
-    /// See [Self::supports_from_trailing_commas]
-    fn get_reserved_keywords_for_table_factor(&self) -> &[Keyword] {
-        keywords::RESERVED_FOR_TABLE_FACTOR
-    }
-
     /// Returns reserved keywords that may prefix a select item expression
     /// e.g. `SELECT CONNECT_BY_ROOT name FROM Tbl2` (Snowflake)
     fn get_reserved_keywords_for_select_item_operator(&self) -> &[Keyword] {
@@ -967,11 +1039,23 @@ pub trait Dialect: Debug + Any {
         explicit || self.is_column_alias(kw, parser)
     }
 
+    /// Returns true if the specified keyword should be parsed as a table factor identifier.
+    /// See [keywords::RESERVED_FOR_TABLE_FACTOR]
+    fn is_table_factor(&self, kw: &Keyword, _parser: &mut Parser) -> bool {
+        !keywords::RESERVED_FOR_TABLE_FACTOR.contains(kw)
+    }
+
+    /// Returns true if the specified keyword should be parsed as a table factor alias.
+    /// See [keywords::RESERVED_FOR_TABLE_ALIAS]
+    fn is_table_alias(&self, kw: &Keyword, _parser: &mut Parser) -> bool {
+        !keywords::RESERVED_FOR_TABLE_ALIAS.contains(kw)
+    }
+
     /// Returns true if the specified keyword should be parsed as a table factor alias.
     /// When explicit is true, the keyword is preceded by an `AS` word. Parser is provided
     /// to enable looking ahead if needed.
-    fn is_table_factor_alias(&self, explicit: bool, kw: &Keyword, _parser: &mut Parser) -> bool {
-        explicit || !keywords::RESERVED_FOR_TABLE_ALIAS.contains(kw)
+    fn is_table_factor_alias(&self, explicit: bool, kw: &Keyword, parser: &mut Parser) -> bool {
+        explicit || self.is_table_alias(kw, parser)
     }
 
     /// Returns true if this dialect supports querying historical table data
@@ -1033,6 +1117,103 @@ pub trait Dialect: Debug + Any {
     fn supports_set_names(&self) -> bool {
         false
     }
+
+    fn supports_space_separated_column_options(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports the `USING` clause in an `ALTER COLUMN` statement.
+    /// Example:
+    ///  ```sql
+    ///  ALTER TABLE tbl ALTER COLUMN col SET DATA TYPE <type> USING <exp>`
+    /// ```
+    fn supports_alter_column_type_using(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports `ALTER TABLE tbl DROP COLUMN c1, ..., cn`
+    fn supports_comma_separated_drop_column_list(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect considers the specified ident as a function
+    /// that returns an identifier. Typically used to generate identifiers
+    /// programmatically.
+    ///
+    /// - [Snowflake](https://docs.snowflake.com/en/sql-reference/identifier-literal)
+    fn is_identifier_generating_function_name(
+        &self,
+        _ident: &Ident,
+        _name_parts: &[ObjectNamePart],
+    ) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports the `x NOTNULL`
+    /// operator expression.
+    fn supports_notnull_operator(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this dialect allows an optional `SIGNED` suffix after integer data types.
+    ///
+    /// Example:
+    /// ```sql
+    /// CREATE TABLE t (i INT(20) SIGNED);
+    /// ```
+    ///
+    /// Note that this is canonicalized to `INT(20)`.
+    fn supports_data_type_signed_suffix(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports the `INTERVAL` data type with [Postgres]-style options.
+    ///
+    /// Examples:
+    /// ```sql
+    /// CREATE TABLE t (i INTERVAL YEAR TO MONTH);
+    /// SELECT '1 second'::INTERVAL HOUR TO SECOND(3);
+    /// ```
+    ///
+    /// See [`crate::ast::DataType::Interval`] and [`crate::ast::IntervalFields`].
+    ///
+    /// [Postgres]: https://www.postgresql.org/docs/17/datatype-datetime.html
+    fn supports_interval_options(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports specifying which table to copy
+    /// the schema from inside parenthesis.
+    ///
+    /// Not parenthesized:
+    /// '''sql
+    /// CREATE TABLE new LIKE old ...
+    /// '''
+    /// [Snowflake](https://docs.snowflake.com/en/sql-reference/sql/create-table#label-create-table-like)
+    /// [BigQuery](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#create_table_like)
+    ///
+    /// Parenthesized:
+    /// '''sql
+    /// CREATE TABLE new (LIKE old ...)
+    /// '''
+    /// [Redshift](https://docs.aws.amazon.com/redshift/latest/dg/r_CREATE_TABLE_NEW.html)
+    fn supports_create_table_like_parenthesized(&self) -> bool {
+        false
+    }
+
+    /// Returns true if the dialect supports `SEMANTIC_VIEW()` table functions.
+    ///
+    /// ```sql
+    /// SELECT * FROM SEMANTIC_VIEW(
+    ///     model_name
+    ///     DIMENSIONS customer.name, customer.region
+    ///     METRICS orders.revenue, orders.count
+    ///     WHERE customer.active = true
+    /// )
+    /// ```
+    fn supports_semantic_view_table_factor(&self) -> bool {
+        false
+    }
 }
 
 /// This represents the operators for which precedence must be defined
@@ -1086,6 +1267,7 @@ pub fn dialect_from_str(dialect_name: impl AsRef<str>) -> Option<Box<dyn Dialect
         "ansi" => Some(Box::new(AnsiDialect {})),
         "duckdb" => Some(Box::new(DuckDbDialect {})),
         "databricks" => Some(Box::new(DatabricksDialect {})),
+        "oracle" => Some(Box::new(OracleDialect {})),
         _ => None,
     }
 }

@@ -32,7 +32,7 @@ use sqlparser::ast::DeclareAssignment::MsSqlAssignment;
 use sqlparser::ast::Value::SingleQuotedString;
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, MsSqlDialect};
-use sqlparser::parser::{Parser, ParserError};
+use sqlparser::parser::{Parser, ParserError, ParserOptions};
 
 #[test]
 fn parse_mssql_identifiers() {
@@ -92,10 +92,31 @@ fn parse_mssql_single_quoted_aliases() {
 
 #[test]
 fn parse_mssql_delimited_identifiers() {
-    let _ = ms().one_statement_parses_to(
+    let s = ms().one_statement_parses_to(
         "SELECT [a.b!] [FROM] FROM foo [WHERE]",
-        "SELECT [a.b!] AS [FROM] FROM foo AS [WHERE]",
+        "SELECT [a.b!] AS [FROM] FROM foo [WHERE]",
     );
+    if let Statement::Query(q) = s {
+        match &q.body.as_select().expect("not a SELECT").from[..] {
+            [from] => match &from.relation {
+                TableFactor::Table { name, alias, .. } => {
+                    assert_eq!(&format!("{name}"), "foo");
+                    assert_eq!(
+                        alias,
+                        &Some(TableAlias {
+                            explicit: false,
+                            name: Ident::with_quote('[', "WHERE"),
+                            columns: vec![]
+                        })
+                    );
+                }
+                _ => panic!("unexpected FROM type"),
+            },
+            _ => panic!("unexpected number of FROMs"),
+        }
+    } else {
+        panic!("statement not parsed as QUERY");
+    }
 }
 
 #[test]
@@ -126,6 +147,7 @@ fn parse_create_procedure() {
                         projection: vec![SelectItem::UnnamedExpr(Expr::Value(
                             (number("1")).with_empty_span()
                         ))],
+                        exclude: None,
                         into: None,
                         from: vec![],
                         lateral_views: vec![],
@@ -153,7 +175,9 @@ fn parse_create_procedure() {
                         quote_style: None,
                         span: Span::empty(),
                     },
-                    data_type: DataType::Int(None)
+                    data_type: DataType::Int(None),
+                    mode: None,
+                    default: None,
                 },
                 ProcedureParam {
                     name: Ident {
@@ -164,14 +188,17 @@ fn parse_create_procedure() {
                     data_type: DataType::Varchar(Some(CharacterLength::IntegerLength {
                         length: 256,
                         unit: None
-                    }))
+                    })),
+                    mode: None,
+                    default: None,
                 }
             ]),
             name: ObjectName::from(vec![Ident {
                 value: "test".into(),
                 quote_style: None,
                 span: Span::empty(),
-            }])
+            }]),
+            language: None,
         }
     )
 }
@@ -192,6 +219,10 @@ fn parse_mssql_create_procedure() {
     let _ = ms().verified_stmt("CREATE PROCEDURE [foo] AS BEGIN SELECT [foo], CASE WHEN [foo] IS NULL THEN 'empty' ELSE 'notempty' END AS [foo]; END");
     // Multiple statements
     let _ = ms().verified_stmt("CREATE PROCEDURE [foo] AS BEGIN UPDATE bar SET col = 'test'; SELECT [foo] FROM BAR WHERE [FOO] > 10; END");
+
+    // parameters with default values
+    let sql = r#"CREATE PROCEDURE foo (IN @a INTEGER = 1, OUT @b TEXT = '2', INOUT @c DATETIME = NULL, @d BOOL = 0) AS BEGIN SELECT 1; END"#;
+    let _ = ms().verified_stmt(sql);
 }
 
 #[test]
@@ -444,10 +475,7 @@ fn parse_mssql_openjson() {
         vec![TableWithJoins {
             relation: TableFactor::Table {
                 name: ObjectName::from(vec![Ident::new("t_test_table")]),
-                alias: Some(TableAlias {
-                    name: Ident::new("A"),
-                    columns: vec![]
-                }),
+                alias: table_alias(true, "A"),
                 args: None,
                 with_hints: vec![],
                 version: None,
@@ -484,10 +512,7 @@ fn parse_mssql_openjson() {
                             as_json: true
                         }
                     ],
-                    alias: Some(TableAlias {
-                        name: Ident::new("B"),
-                        columns: vec![]
-                    })
+                    alias: table_alias(true, "B")
                 },
                 global: false,
                 join_operator: JoinOperator::CrossApply
@@ -504,10 +529,7 @@ fn parse_mssql_openjson() {
         vec![TableWithJoins {
             relation: TableFactor::Table {
                 name: ObjectName::from(vec![Ident::new("t_test_table"),]),
-                alias: Some(TableAlias {
-                    name: Ident::new("A"),
-                    columns: vec![]
-                }),
+                alias: table_alias(true, "A"),
                 args: None,
                 with_hints: vec![],
                 version: None,
@@ -544,10 +566,7 @@ fn parse_mssql_openjson() {
                             as_json: true
                         }
                     ],
-                    alias: Some(TableAlias {
-                        name: Ident::new("B"),
-                        columns: vec![]
-                    })
+                    alias: table_alias(true, "B")
                 },
                 global: false,
                 join_operator: JoinOperator::CrossApply
@@ -564,10 +583,7 @@ fn parse_mssql_openjson() {
         vec![TableWithJoins {
             relation: TableFactor::Table {
                 name: ObjectName::from(vec![Ident::new("t_test_table")]),
-                alias: Some(TableAlias {
-                    name: Ident::new("A"),
-                    columns: vec![]
-                }),
+                alias: table_alias(true, "A"),
                 args: None,
                 with_hints: vec![],
                 version: None,
@@ -604,10 +620,7 @@ fn parse_mssql_openjson() {
                             as_json: false
                         }
                     ],
-                    alias: Some(TableAlias {
-                        name: Ident::new("B"),
-                        columns: vec![]
-                    })
+                    alias: table_alias(true, "B")
                 },
                 global: false,
                 join_operator: JoinOperator::CrossApply
@@ -624,10 +637,7 @@ fn parse_mssql_openjson() {
         vec![TableWithJoins {
             relation: TableFactor::Table {
                 name: ObjectName::from(vec![Ident::new("t_test_table")]),
-                alias: Some(TableAlias {
-                    name: Ident::new("A"),
-                    columns: vec![]
-                }),
+                alias: table_alias(true, "A"),
                 args: None,
                 with_hints: vec![],
                 version: None,
@@ -644,10 +654,7 @@ fn parse_mssql_openjson() {
                     ),
                     json_path: Some(Value::SingleQuotedString("$.config".into())),
                     columns: vec![],
-                    alias: Some(TableAlias {
-                        name: Ident::new("B"),
-                        columns: vec![]
-                    })
+                    alias: table_alias(true, "B")
                 },
                 global: false,
                 join_operator: JoinOperator::CrossApply
@@ -664,10 +671,7 @@ fn parse_mssql_openjson() {
         vec![TableWithJoins {
             relation: TableFactor::Table {
                 name: ObjectName::from(vec![Ident::new("t_test_table")]),
-                alias: Some(TableAlias {
-                    name: Ident::new("A"),
-                    columns: vec![]
-                }),
+                alias: table_alias(true, "A"),
                 args: None,
                 with_hints: vec![],
                 version: None,
@@ -684,10 +688,7 @@ fn parse_mssql_openjson() {
                     ),
                     json_path: None,
                     columns: vec![],
-                    alias: Some(TableAlias {
-                        name: Ident::new("B"),
-                        columns: vec![]
-                    })
+                    alias: table_alias(true, "B")
                 },
                 global: false,
                 join_operator: JoinOperator::CrossApply
@@ -768,14 +769,10 @@ fn parse_mssql_bin_literal() {
 fn parse_mssql_create_role() {
     let sql = "CREATE ROLE mssql AUTHORIZATION helena";
     match ms().verified_stmt(sql) {
-        Statement::CreateRole {
-            names,
-            authorization_owner,
-            ..
-        } => {
-            assert_eq_vec(&["mssql"], &names);
+        Statement::CreateRole(create_role) => {
+            assert_eq_vec(&["mssql"], &create_role.names);
             assert_eq!(
-                authorization_owner,
+                create_role.authorization_owner,
                 Some(ObjectName::from(vec![Ident {
                     value: "helena".into(),
                     quote_style: None,
@@ -1365,6 +1362,7 @@ fn parse_substring_in_select() {
                             special: true,
                             shorthand: false,
                         })],
+                        exclude: None,
                         into: None,
                         from: vec![TableWithJoins {
                             relation: table_from_name(ObjectName::from(vec![Ident {
@@ -1513,6 +1511,7 @@ fn parse_mssql_declare() {
                             (Value::Number("4".parse().unwrap(), false)).with_empty_span()
                         )),
                     })],
+                    exclude: None,
                     into: None,
                     from: vec![],
                     lateral_views: vec![],
@@ -1670,7 +1669,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            ms().verified_stmt(&format!("USE {}", object_name)),
+            ms().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -1678,7 +1677,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                ms().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                ms().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
@@ -1842,6 +1841,7 @@ fn parse_create_table_with_valid_options() {
                 temporary: false,
                 external: false,
                 global: None,
+                dynamic: false,
                 if_not_exists: false,
                 transient: false,
                 volatile: false,
@@ -1881,12 +1881,7 @@ fn parse_create_table_with_valid_options() {
                 ],
                 constraints: vec![],
                 hive_distribution: HiveDistributionStyle::NONE,
-                hive_formats: Some(HiveFormat {
-                    row_format: None,
-                    serde_properties: None,
-                    storage: None,
-                    location: None,
-                },),
+                hive_formats: None,
                 file_format: None,
                 location: None,
                 query: None,
@@ -1918,7 +1913,13 @@ fn parse_create_table_with_valid_options() {
                 catalog: None,
                 catalog_sync: None,
                 storage_serialization_policy: None,
-                table_options: CreateTableOptions::With(with_options)
+                table_options: CreateTableOptions::With(with_options),
+                target_lag: None,
+                warehouse: None,
+                version: None,
+                refresh_mode: None,
+                initialize: None,
+                require_user: false,
             })
         );
     }
@@ -2025,6 +2026,7 @@ fn parse_create_table_with_identity_column() {
                 temporary: false,
                 external: false,
                 global: None,
+                dynamic: false,
                 if_not_exists: false,
                 transient: false,
                 volatile: false,
@@ -2046,12 +2048,7 @@ fn parse_create_table_with_identity_column() {
                 },],
                 constraints: vec![],
                 hive_distribution: HiveDistributionStyle::NONE,
-                hive_formats: Some(HiveFormat {
-                    row_format: None,
-                    serde_properties: None,
-                    storage: None,
-                    location: None,
-                },),
+                hive_formats: None,
                 file_format: None,
                 location: None,
                 query: None,
@@ -2082,7 +2079,13 @@ fn parse_create_table_with_identity_column() {
                 catalog: None,
                 catalog_sync: None,
                 storage_serialization_policy: None,
-                table_options: CreateTableOptions::None
+                table_options: CreateTableOptions::None,
+                target_lag: None,
+                warehouse: None,
+                version: None,
+                refresh_mode: None,
+                initialize: None,
+                require_user: false,
             }),
         );
     }
@@ -2184,7 +2187,7 @@ fn parse_mssql_if_else() {
                 "IF 1 = 1 BEGIN SET @A = 1; END ELSE SET @A = 2;"
             );
         }
-        _ => panic!("Unexpected statements: {:?}", stmts),
+        _ => panic!("Unexpected statements: {stmts:?}"),
     }
 }
 
@@ -2234,7 +2237,7 @@ fn test_mssql_if_statements_span() {
                 Span::new(Location::new(1, 21), Location::new(1, 36))
             );
         }
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Blocks
@@ -2255,7 +2258,7 @@ fn test_mssql_if_statements_span() {
                 Span::new(Location::new(1, 32), Location::new(1, 57))
             );
         }
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 }
 
@@ -2321,6 +2324,18 @@ fn ms() -> TestedDialects {
     TestedDialects::new(vec![Box::new(MsSqlDialect {})])
 }
 
+// MS SQL dialect with support for optional semi-colon statement delimiters
+fn tsql() -> TestedDialects {
+    TestedDialects::new_with_options(
+        vec![Box::new(MsSqlDialect {})],
+        ParserOptions {
+            trailing_commas: false,
+            unescape: true,
+            require_semicolon_stmt_delimiter: false,
+        },
+    )
+}
+
 fn ms_and_generic() -> TestedDialects {
     TestedDialects::new(vec![Box::new(MsSqlDialect {}), Box::new(GenericDialect {})])
 }
@@ -2352,20 +2367,22 @@ fn parse_create_trigger() {
     let create_stmt = ms().verified_stmt(create_trigger);
     assert_eq!(
         create_stmt,
-        Statement::CreateTrigger {
+        Statement::CreateTrigger(CreateTrigger {
             or_alter: true,
+            temporary: false,
             or_replace: false,
             is_constraint: false,
             name: ObjectName::from(vec![Ident::new("reminder1")]),
-            period: TriggerPeriod::After,
+            period: Some(TriggerPeriod::After),
+            period_before_table: false,
             events: vec![TriggerEvent::Insert, TriggerEvent::Update(vec![]),],
             table_name: ObjectName::from(vec![Ident::new("Sales"), Ident::new("Customer")]),
             referenced_table_name: None,
             referencing: vec![],
-            trigger_object: TriggerObject::Statement,
-            include_each: false,
+            trigger_object: None,
             condition: None,
             exec_body: None,
+            statements_as: true,
             statements: Some(ConditionalStatements::Sequence {
                 statements: vec![Statement::RaisError {
                     message: Box::new(Expr::Value(
@@ -2383,7 +2400,7 @@ fn parse_create_trigger() {
                 }],
             }),
             characteristics: None,
-        }
+        })
     );
 
     let multi_statement_as_trigger = "\
@@ -2442,12 +2459,12 @@ fn parse_drop_trigger() {
     let drop_stmt = ms().one_statement_parses_to(sql_drop_trigger, "");
     assert_eq!(
         drop_stmt,
-        Statement::DropTrigger {
+        Statement::DropTrigger(DropTrigger {
             if_exists: false,
             trigger_name: ObjectName::from(vec![Ident::new("emp_stamp")]),
             table_name: None,
             option: None,
-        }
+        })
     );
 }
 
@@ -2476,4 +2493,16 @@ fn parse_mssql_grant() {
 #[test]
 fn parse_mssql_deny() {
     ms().verified_stmt("DENY SELECT ON my_table TO public, db_admin");
+}
+
+#[test]
+fn test_tsql_no_semicolon_delimiter() {
+    let sql = r#"
+DECLARE @X AS NVARCHAR(MAX)='x'
+DECLARE @Y AS NVARCHAR(MAX)='y'
+    "#;
+
+    let stmts = tsql().parse_sql_statements(sql).unwrap();
+    assert_eq!(stmts.len(), 2);
+    assert!(stmts.iter().all(|s| matches!(s, Statement::Declare { .. })));
 }

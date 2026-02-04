@@ -36,3 +36,21 @@ github:
     rebase: false
   features:
     issues: true
+  protected_branches:
+    main:
+      required_status_checks:
+        contexts:
+          - "codestyle"
+          - "lint"
+          - "benchmark-lint"
+          - "compile"
+          - "docs"
+          - "compile-no-std"
+          - "test (stable)"
+          - "test (beta)"
+          - "test (nightly)"
+          - "Release Audit Tool (RAT)"
+  pull_requests:
+    # enable updating head branches of pull requests
+    allow_update_branch: true
+    allow_auto_merge: true

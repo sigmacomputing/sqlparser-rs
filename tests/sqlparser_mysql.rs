@@ -593,7 +593,7 @@ fn parse_use() {
     for object_name in &valid_object_names {
         // Test single identifier without quotes
         assert_eq!(
-            mysql_and_generic().verified_stmt(&format!("USE {}", object_name)),
+            mysql_and_generic().verified_stmt(&format!("USE {object_name}")),
             Statement::Use(Use::Object(ObjectName::from(vec![Ident::new(
                 object_name.to_string()
             )])))
@@ -601,8 +601,7 @@ fn parse_use() {
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
             assert_eq!(
-                mysql_and_generic()
-                    .verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                mysql_and_generic().verified_stmt(&format!("USE {quote}{object_name}{quote}")),
                 Statement::Use(Use::Object(ObjectName::from(vec![Ident::with_quote(
                     quote,
                     object_name.to_string(),
@@ -639,10 +638,14 @@ fn parse_create_table_auto_increment() {
                     options: vec![
                         ColumnOptionDef {
                             name: None,
-                            option: ColumnOption::Unique {
-                                is_primary: true,
-                                characteristics: None
-                            },
+                            option: ColumnOption::PrimaryKey(PrimaryKeyConstraint {
+                                name: None,
+                                index_name: None,
+                                index_type: None,
+                                columns: vec![],
+                                index_options: vec![],
+                                characteristics: None,
+                            }),
                         },
                         ColumnOptionDef {
                             name: None,
@@ -670,8 +673,22 @@ fn table_constraint_unique_primary_ctor(
     characteristics: Option<ConstraintCharacteristics>,
     unique_index_type_display: Option<KeyOrIndexDisplay>,
 ) -> TableConstraint {
+    let columns = columns
+        .into_iter()
+        .map(|ident| IndexColumn {
+            column: OrderByExpr {
+                expr: Expr::Identifier(ident),
+                options: OrderByOptions {
+                    asc: None,
+                    nulls_first: None,
+                },
+                with_fill: None,
+            },
+            operator_class: None,
+        })
+        .collect();
     match unique_index_type_display {
-        Some(index_type_display) => TableConstraint::Unique {
+        Some(index_type_display) => UniqueConstraint {
             name,
             index_name,
             index_type_display,
@@ -680,15 +697,17 @@ fn table_constraint_unique_primary_ctor(
             index_options,
             characteristics,
             nulls_distinct: NullsDistinctOption::None,
-        },
-        None => TableConstraint::PrimaryKey {
+        }
+        .into(),
+        None => PrimaryKeyConstraint {
             name,
             index_name,
             index_type,
             columns,
             index_options,
             characteristics,
-        },
+        }
+        .into(),
     }
 }
 
@@ -728,10 +747,14 @@ fn parse_create_table_primary_and_unique_key() {
                             options: vec![
                                 ColumnOptionDef {
                                     name: None,
-                                    option: ColumnOption::Unique {
-                                        is_primary: true,
-                                        characteristics: None
-                                    },
+                                    option: ColumnOption::PrimaryKey(PrimaryKeyConstraint {
+                                        name: None,
+                                        index_name: None,
+                                        index_type: None,
+                                        columns: vec![],
+                                        index_options: vec![],
+                                        characteristics: None,
+                                    }),
                                 },
                                 ColumnOptionDef {
                                     name: None,
@@ -793,6 +816,67 @@ fn parse_create_table_primary_and_unique_key_with_index_options() {
 
         mysql_and_generic().verified_stmt(sql);
     }
+}
+
+#[test]
+fn parse_prefix_key_part() {
+    let expected = vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::value(
+        number("10"),
+    )))];
+    for sql in [
+        "CREATE INDEX idx_index ON t(textcol(10))",
+        "ALTER TABLE tab ADD INDEX idx_index (textcol(10))",
+        "ALTER TABLE tab ADD PRIMARY KEY (textcol(10))",
+        "ALTER TABLE tab ADD UNIQUE KEY (textcol(10))",
+        "ALTER TABLE tab ADD UNIQUE KEY (textcol(10))",
+        "ALTER TABLE tab ADD FULLTEXT INDEX (textcol(10))",
+        "CREATE TABLE t (textcol TEXT, INDEX idx_index (textcol(10)))",
+    ] {
+        match index_column(mysql_and_generic().verified_stmt(sql)) {
+            Expr::Function(Function {
+                name,
+                args: FunctionArguments::List(FunctionArgumentList { args, .. }),
+                ..
+            }) => {
+                assert_eq!(name.to_string(), "textcol");
+                assert_eq!(args, expected);
+            }
+            expr => panic!("unexpected expression {expr} for {sql}"),
+        }
+    }
+}
+
+#[test]
+fn test_functional_key_part() {
+    assert_eq!(
+        index_column(
+            mysql_and_generic()
+                .verified_stmt("CREATE INDEX idx_index ON t((col COLLATE utf8mb4_bin) DESC)")
+        ),
+        Expr::Nested(Box::new(Expr::Collate {
+            expr: Box::new(Expr::Identifier("col".into())),
+            collation: ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                Ident::new("utf8mb4_bin")
+            )]),
+        }))
+    );
+    assert_eq!(
+        index_column(mysql_and_generic().verified_stmt(
+            r#"CREATE TABLE t (jsoncol JSON, PRIMARY KEY ((CAST(col ->> '$.id' AS UNSIGNED)) ASC))"#
+        )),
+        Expr::Nested(Box::new(Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier(Ident::new("col"))),
+                op: BinaryOperator::LongArrow,
+                right: Box::new(Expr::Value(
+                    Value::SingleQuotedString("$.id".to_string()).with_empty_span()
+                )),
+            }),
+            data_type: DataType::Unsigned,
+            format: None,
+        })),
+    );
 }
 
 #[test]
@@ -1288,6 +1372,13 @@ fn parse_create_table_gencol() {
 }
 
 #[test]
+fn parse_create_table_options_comma_separated() {
+    let sql = "CREATE TABLE t (x INT) DEFAULT CHARSET = utf8mb4, ENGINE = InnoDB , AUTO_INCREMENT 1 DATA DIRECTORY '/var/lib/mysql/data'";
+    let canonical = "CREATE TABLE t (x INT) DEFAULT CHARSET = utf8mb4 ENGINE = InnoDB AUTO_INCREMENT = 1 DATA DIRECTORY = '/var/lib/mysql/data'";
+    mysql_and_generic().one_statement_parses_to(sql, canonical);
+}
+
+#[test]
 fn parse_quote_identifiers() {
     let sql = "CREATE TABLE `PRIMARY` (`BEGIN` INT PRIMARY KEY)";
     match mysql().verified_stmt(sql) {
@@ -1299,10 +1390,14 @@ fn parse_quote_identifiers() {
                     data_type: DataType::Int(None),
                     options: vec![ColumnOptionDef {
                         name: None,
-                        option: ColumnOption::Unique {
-                            is_primary: true,
-                            characteristics: None
-                        },
+                        option: ColumnOption::PrimaryKey(PrimaryKeyConstraint {
+                            name: None,
+                            index_name: None,
+                            index_type: None,
+                            columns: vec![],
+                            index_options: vec![],
+                            characteristics: None,
+                        }),
                     }],
                 }],
                 columns
@@ -1329,6 +1424,7 @@ fn parse_escaped_quote_identifiers_with_escape() {
                     quote_style: Some('`'),
                     span: Span::empty(),
                 }))],
+                exclude: None,
                 into: None,
                 from: vec![],
                 lateral_views: vec![],
@@ -1367,6 +1463,7 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
             ParserOptions {
                 trailing_commas: false,
                 unescape: false,
+                require_semicolon_stmt_delimiter: true,
             }
         )
         .verified_stmt(sql),
@@ -1382,6 +1479,7 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
                     quote_style: Some('`'),
                     span: Span::empty(),
                 }))],
+                exclude: None,
                 into: None,
                 from: vec![],
                 lateral_views: vec![],
@@ -1429,6 +1527,7 @@ fn parse_escaped_backticks_with_escape() {
                     quote_style: Some('`'),
                     span: Span::empty(),
                 }))],
+                exclude: None,
                 into: None,
                 from: vec![],
                 lateral_views: vec![],
@@ -1480,6 +1579,7 @@ fn parse_escaped_backticks_with_no_escape() {
                     quote_style: Some('`'),
                     span: Span::empty(),
                 }))],
+                exclude: None,
                 into: None,
                 from: vec![],
                 lateral_views: vec![],
@@ -1627,6 +1727,143 @@ fn parse_create_table_unsigned() {
 }
 
 #[test]
+fn parse_signed_data_types() {
+    let sql = "CREATE TABLE foo (bar_tinyint TINYINT(3) SIGNED, bar_smallint SMALLINT(5) SIGNED, bar_mediumint MEDIUMINT(13) SIGNED, bar_int INT(11) SIGNED, bar_bigint BIGINT(20) SIGNED)";
+    let canonical = "CREATE TABLE foo (bar_tinyint TINYINT(3), bar_smallint SMALLINT(5), bar_mediumint MEDIUMINT(13), bar_int INT(11), bar_bigint BIGINT(20))";
+    match mysql().one_statement_parses_to(sql, canonical) {
+        Statement::CreateTable(CreateTable { name, columns, .. }) => {
+            assert_eq!(name.to_string(), "foo");
+            assert_eq!(
+                vec![
+                    ColumnDef {
+                        name: Ident::new("bar_tinyint"),
+                        data_type: DataType::TinyInt(Some(3)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_smallint"),
+                        data_type: DataType::SmallInt(Some(5)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_mediumint"),
+                        data_type: DataType::MediumInt(Some(13)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_int"),
+                        data_type: DataType::Int(Some(11)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_bigint"),
+                        data_type: DataType::BigInt(Some(20)),
+                        options: vec![],
+                    },
+                ],
+                columns
+            );
+        }
+        _ => unreachable!(),
+    }
+    all_dialects_except(|d| d.supports_data_type_signed_suffix())
+        .run_parser_method(sql, |p| p.parse_statement())
+        .expect_err("SIGNED suffix should not be allowed");
+}
+
+#[test]
+fn parse_deprecated_mysql_unsigned_data_types() {
+    let sql = "CREATE TABLE foo (bar_decimal DECIMAL UNSIGNED, bar_decimal_prec DECIMAL(10) UNSIGNED, bar_decimal_scale DECIMAL(10,2) UNSIGNED, bar_dec DEC UNSIGNED, bar_dec_prec DEC(10) UNSIGNED, bar_dec_scale DEC(10,2) UNSIGNED, bar_float FLOAT UNSIGNED, bar_float_prec FLOAT(10) UNSIGNED, bar_float_scale FLOAT(10,2) UNSIGNED, bar_double DOUBLE UNSIGNED, bar_double_prec DOUBLE(10) UNSIGNED, bar_double_scale DOUBLE(10,2) UNSIGNED, bar_real REAL UNSIGNED, bar_double_precision DOUBLE PRECISION UNSIGNED)";
+    match mysql().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { name, columns, .. }) => {
+            assert_eq!(name.to_string(), "foo");
+            assert_eq!(
+                vec![
+                    ColumnDef {
+                        name: Ident::new("bar_decimal"),
+                        data_type: DataType::DecimalUnsigned(ExactNumberInfo::None),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_decimal_prec"),
+                        data_type: DataType::DecimalUnsigned(ExactNumberInfo::Precision(10)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_decimal_scale"),
+                        data_type: DataType::DecimalUnsigned(ExactNumberInfo::PrecisionAndScale(
+                            10, 2
+                        )),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_dec"),
+                        data_type: DataType::DecUnsigned(ExactNumberInfo::None),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_dec_prec"),
+                        data_type: DataType::DecUnsigned(ExactNumberInfo::Precision(10)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_dec_scale"),
+                        data_type: DataType::DecUnsigned(ExactNumberInfo::PrecisionAndScale(10, 2)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_float"),
+                        data_type: DataType::FloatUnsigned(ExactNumberInfo::None),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_float_prec"),
+                        data_type: DataType::FloatUnsigned(ExactNumberInfo::Precision(10)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_float_scale"),
+                        data_type: DataType::FloatUnsigned(ExactNumberInfo::PrecisionAndScale(
+                            10, 2
+                        )),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_double"),
+                        data_type: DataType::DoubleUnsigned(ExactNumberInfo::None),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_double_prec"),
+                        data_type: DataType::DoubleUnsigned(ExactNumberInfo::Precision(10)),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_double_scale"),
+                        data_type: DataType::DoubleUnsigned(ExactNumberInfo::PrecisionAndScale(
+                            10, 2
+                        )),
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_real"),
+                        data_type: DataType::RealUnsigned,
+                        options: vec![],
+                    },
+                    ColumnDef {
+                        name: Ident::new("bar_double_precision"),
+                        data_type: DataType::DoublePrecisionUnsigned,
+                        options: vec![],
+                    },
+                ],
+                columns
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn parse_simple_insert() {
     let sql = r"INSERT INTO tasks (title, priority) VALUES ('Test Some Inserts', 1), ('Test Entry 2', 2), ('Test Entry 3', 3)";
 
@@ -1648,6 +1885,7 @@ fn parse_simple_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![
                             vec![
@@ -1713,6 +1951,7 @@ fn parse_ignore_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::Value(
@@ -1762,6 +2001,7 @@ fn parse_priority_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::Value(
@@ -1808,6 +2048,7 @@ fn parse_priority_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::Value(
@@ -1860,6 +2101,7 @@ fn parse_insert_as() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![Expr::Value(
                             (Value::SingleQuotedString("2024-01-01".to_string())).with_empty_span()
@@ -1919,6 +2161,7 @@ fn parse_insert_as() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::value(number("1")),
@@ -1969,6 +2212,7 @@ fn parse_replace_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::Value(
@@ -2016,6 +2260,7 @@ fn parse_empty_row_insert() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![], vec![]]
                     })),
@@ -2066,6 +2311,7 @@ fn parse_insert_with_on_duplicate_update() {
                 Some(Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Values(Values {
+                        value_keyword: false,
                         explicit_row: false,
                         rows: vec![vec![
                             Expr::Value(
@@ -2151,6 +2397,7 @@ fn parse_select_with_numeric_prefix_column_name() {
                     projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(
                         "123col_$@123abc"
                     )))],
+                    exclude: None,
                     into: None,
                     from: vec![TableWithJoins {
                         relation: table_from_name(ObjectName::from(vec![Ident::with_quote(
@@ -2188,11 +2435,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                 Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
                     assert_eq!(&[Ident::new("t"), Ident::new("15to29")], &parts[..]);
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 2: Qualified column name that starts with digits and on its own represents a number.
@@ -2202,11 +2449,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                 Some(SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts))) => {
                     assert_eq!(&[Ident::new("t"), Ident::new("15e29")], &parts[..]);
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 3: Unqualified, the same token is parsed as a number.
@@ -2220,11 +2467,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                 Some(SelectItem::UnnamedExpr(Expr::Value(ValueWithSpan { value, .. }))) => {
                     assert_eq!(&number("15e29"), value);
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 4: Quoted simple identifier.
@@ -2234,11 +2481,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                 Some(SelectItem::UnnamedExpr(Expr::Identifier(name))) => {
                     assert_eq!(&Ident::with_quote('`', "15e29"), name);
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 5: Quoted compound identifier.
@@ -2251,11 +2498,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                         &parts[..]
                     );
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 6: Multi-level compound identifiers.
@@ -2272,11 +2519,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                         &parts[..]
                     );
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 
     // Case 7: Multi-level compound quoted identifiers.
@@ -2293,11 +2540,11 @@ fn parse_qualified_identifiers_with_numeric_prefix() {
                         &parts[..]
                     );
                 }
-                proj => panic!("Unexpected projection: {:?}", proj),
+                proj => panic!("Unexpected projection: {proj:?}"),
             },
-            body => panic!("Unexpected statement body: {:?}", body),
+            body => panic!("Unexpected statement body: {body:?}"),
         },
-        stmt => panic!("Unexpected statement: {:?}", stmt),
+        stmt => panic!("Unexpected statement: {stmt:?}"),
     }
 }
 
@@ -2318,7 +2565,6 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
                 q.body,
                 Box::new(SetExpr::Select(Box::new(Select {
                     select_token: AttachedToken::empty(),
-
                     distinct: None,
                     top: None,
                     top_before_distinct: false,
@@ -2326,6 +2572,7 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
                         SelectItem::UnnamedExpr(Expr::value(number("123e4"))),
                         SelectItem::UnnamedExpr(Expr::Identifier(Ident::new("123col_$@123abc")))
                     ],
+                    exclude: None,
                     into: None,
                     from: vec![TableWithJoins {
                         relation: table_from_name(ObjectName::from(vec![Ident::with_quote(
@@ -2377,22 +2624,21 @@ fn parse_insert_with_numeric_prefix_column_name() {
 fn parse_update_with_joins() {
     let sql = "UPDATE orders AS o JOIN customers AS c ON o.customer_id = c.id SET o.completed = true WHERE c.firstname = 'Peter'";
     match mysql().verified_stmt(sql) {
-        Statement::Update {
+        Statement::Update(Update {
             table,
             assignments,
             from: _from,
             selection,
             returning,
             or: None,
-        } => {
+            limit: None,
+            update_token: _,
+        }) => {
             assert_eq!(
                 TableWithJoins {
                     relation: TableFactor::Table {
                         name: ObjectName::from(vec![Ident::new("orders")]),
-                        alias: Some(TableAlias {
-                            name: Ident::new("o"),
-                            columns: vec![]
-                        }),
+                        alias: table_alias(true, "o"),
                         args: None,
                         with_hints: vec![],
                         version: None,
@@ -2405,10 +2651,7 @@ fn parse_update_with_joins() {
                     joins: vec![Join {
                         relation: TableFactor::Table {
                             name: ObjectName::from(vec![Ident::new("customers")]),
-                            alias: Some(TableAlias {
-                                name: Ident::new("c"),
-                                columns: vec![]
-                            }),
+                            alias: table_alias(true, "c"),
                             args: None,
                             with_hints: vec![],
                             version: None,
@@ -2502,18 +2745,19 @@ fn parse_delete_with_limit() {
 #[test]
 fn parse_alter_table_add_column() {
     match mysql().verified_stmt("ALTER TABLE tab ADD COLUMN b INT FIRST") {
-        Statement::AlterTable {
+        Statement::AlterTable(AlterTable {
             name,
             if_exists,
             only,
             operations,
-            iceberg,
+            table_type,
             location: _,
             on_cluster: _,
-        } => {
+            end_token: _,
+        }) => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
-            assert!(!iceberg);
+            assert_eq!(table_type, None);
             assert!(!only);
             assert_eq!(
                 operations,
@@ -2533,13 +2777,13 @@ fn parse_alter_table_add_column() {
     }
 
     match mysql().verified_stmt("ALTER TABLE tab ADD COLUMN b INT AFTER foo") {
-        Statement::AlterTable {
+        Statement::AlterTable(AlterTable {
             name,
             if_exists,
             only,
             operations,
             ..
-        } => {
+        }) => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
             assert!(!only);
@@ -2570,13 +2814,13 @@ fn parse_alter_table_add_columns() {
     match mysql()
         .verified_stmt("ALTER TABLE tab ADD COLUMN a TEXT FIRST, ADD COLUMN b INT AFTER foo")
     {
-        Statement::AlterTable {
+        Statement::AlterTable(AlterTable {
             name,
             if_exists,
             only,
             operations,
             ..
-        } => {
+        }) => {
             assert_eq!(name.to_string(), "tab");
             assert!(!if_exists);
             assert!(!only);
@@ -2618,7 +2862,9 @@ fn parse_alter_table_add_columns() {
 fn parse_alter_table_drop_primary_key() {
     assert_matches!(
         alter_table_op(mysql_and_generic().verified_stmt("ALTER TABLE tab DROP PRIMARY KEY")),
-        AlterTableOperation::DropPrimaryKey
+        AlterTableOperation::DropPrimaryKey {
+            drop_behavior: None
+        }
     );
 }
 
@@ -2628,7 +2874,7 @@ fn parse_alter_table_drop_foreign_key() {
         alter_table_op(
             mysql_and_generic().verified_stmt("ALTER TABLE tab DROP FOREIGN KEY foo_ibfk_1")
         ),
-        AlterTableOperation::DropForeignKey { name } if name.value == "foo_ibfk_1"
+        AlterTableOperation::DropForeignKey { name, .. } if name.value == "foo_ibfk_1"
     );
 }
 
@@ -2796,13 +3042,13 @@ fn parse_alter_table_with_algorithm() {
         "ALTER TABLE users DROP COLUMN password_digest, ALGORITHM = COPY, RENAME COLUMN name TO username";
     let stmt = mysql_and_generic().verified_stmt(sql);
     match stmt {
-        Statement::AlterTable { operations, .. } => {
+        Statement::AlterTable(AlterTable { operations, .. }) => {
             assert_eq!(
                 operations,
                 vec![
                     AlterTableOperation::DropColumn {
                         has_column_keyword: true,
-                        column_name: Ident::new("password_digest"),
+                        column_names: vec![Ident::new("password_digest")],
                         if_exists: false,
                         drop_behavior: None,
                     },
@@ -2844,13 +3090,13 @@ fn parse_alter_table_with_lock() {
         "ALTER TABLE users DROP COLUMN password_digest, LOCK = EXCLUSIVE, RENAME COLUMN name TO username";
     let stmt = mysql_and_generic().verified_stmt(sql);
     match stmt {
-        Statement::AlterTable { operations, .. } => {
+        Statement::AlterTable(AlterTable { operations, .. }) => {
             assert_eq!(
                 operations,
                 vec![
                     AlterTableOperation::DropColumn {
                         has_column_keyword: true,
-                        column_name: Ident::new("password_digest"),
+                        column_names: vec![Ident::new("password_digest")],
                         if_exists: false,
                         drop_behavior: None,
                     },
@@ -2969,6 +3215,7 @@ fn parse_substring_in_select() {
                             special: true,
                             shorthand: false,
                         })],
+                        exclude: None,
                         into: None,
                         from: vec![TableWithJoins {
                             relation: table_from_name(ObjectName::from(vec![Ident {
@@ -3283,6 +3530,7 @@ fn parse_hex_string_introducer() {
                     )
                     .into(),
                 })],
+                exclude: None,
                 from: vec![],
                 lateral_views: vec![],
                 prewhere: None,
@@ -3462,10 +3710,7 @@ fn parse_json_table() {
                     on_error: Some(JsonTableColumnErrorHandling::Null),
                 }),
             ],
-            alias: Some(TableAlias {
-                name: Ident::new("t"),
-                columns: vec![],
-            }),
+            alias: table_alias(true, "t"),
         }
     );
 }
@@ -3542,6 +3787,7 @@ fn parse_grant() {
         with_grant_option,
         as_grantor: _,
         granted_by,
+        current_grants: _,
     } = stmt
     {
         assert_eq!(
@@ -3624,7 +3870,7 @@ fn parse_revoke() {
 fn parse_create_view_algorithm_param() {
     let sql = "CREATE ALGORITHM = MERGE VIEW foo AS SELECT 1";
     let stmt = mysql().verified_stmt(sql);
-    if let Statement::CreateView {
+    if let Statement::CreateView(CreateView {
         params:
             Some(CreateViewParams {
                 algorithm,
@@ -3632,7 +3878,7 @@ fn parse_create_view_algorithm_param() {
                 security,
             }),
         ..
-    } = stmt
+    }) = stmt
     {
         assert_eq!(algorithm, Some(CreateViewAlgorithm::Merge));
         assert!(definer.is_none());
@@ -3648,7 +3894,7 @@ fn parse_create_view_algorithm_param() {
 fn parse_create_view_definer_param() {
     let sql = "CREATE DEFINER = 'jeffrey'@'localhost' VIEW foo AS SELECT 1";
     let stmt = mysql().verified_stmt(sql);
-    if let Statement::CreateView {
+    if let Statement::CreateView(CreateView {
         params:
             Some(CreateViewParams {
                 algorithm,
@@ -3656,7 +3902,7 @@ fn parse_create_view_definer_param() {
                 security,
             }),
         ..
-    } = stmt
+    }) = stmt
     {
         assert!(algorithm.is_none());
         if let Some(GranteeName::UserHost { user, host }) = definer {
@@ -3677,7 +3923,7 @@ fn parse_create_view_definer_param() {
 fn parse_create_view_security_param() {
     let sql = "CREATE SQL SECURITY DEFINER VIEW foo AS SELECT 1";
     let stmt = mysql().verified_stmt(sql);
-    if let Statement::CreateView {
+    if let Statement::CreateView(CreateView {
         params:
             Some(CreateViewParams {
                 algorithm,
@@ -3685,7 +3931,7 @@ fn parse_create_view_security_param() {
                 security,
             }),
         ..
-    } = stmt
+    }) = stmt
     {
         assert!(algorithm.is_none());
         assert!(definer.is_none());
@@ -3700,7 +3946,7 @@ fn parse_create_view_security_param() {
 fn parse_create_view_multiple_params() {
     let sql = "CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW foo AS SELECT 1";
     let stmt = mysql().verified_stmt(sql);
-    if let Statement::CreateView {
+    if let Statement::CreateView(CreateView {
         params:
             Some(CreateViewParams {
                 algorithm,
@@ -3708,7 +3954,7 @@ fn parse_create_view_multiple_params() {
                 security,
             }),
         ..
-    } = stmt
+    }) = stmt
     {
         assert_eq!(algorithm, Some(CreateViewAlgorithm::Undefined));
         if let Some(GranteeName::UserHost { user, host }) = definer {
@@ -3779,37 +4025,42 @@ fn parse_looks_like_single_line_comment() {
 
 #[test]
 fn parse_create_trigger() {
-    let sql_create_trigger = r#"
-        CREATE TRIGGER emp_stamp BEFORE INSERT ON emp
-            FOR EACH ROW EXECUTE FUNCTION emp_stamp();
-    "#;
-    let create_stmt = mysql().one_statement_parses_to(sql_create_trigger, "");
+    let sql_create_trigger = r#"CREATE TRIGGER emp_stamp BEFORE INSERT ON emp FOR EACH ROW EXECUTE FUNCTION emp_stamp()"#;
+    let create_stmt = mysql().verified_stmt(sql_create_trigger);
     assert_eq!(
         create_stmt,
-        Statement::CreateTrigger {
+        Statement::CreateTrigger(CreateTrigger {
             or_alter: false,
+            temporary: false,
             or_replace: false,
             is_constraint: false,
             name: ObjectName::from(vec![Ident::new("emp_stamp")]),
-            period: TriggerPeriod::Before,
+            period: Some(TriggerPeriod::Before),
+            period_before_table: true,
             events: vec![TriggerEvent::Insert],
             table_name: ObjectName::from(vec![Ident::new("emp")]),
             referenced_table_name: None,
             referencing: vec![],
-            trigger_object: TriggerObject::Row,
-            include_each: true,
+            trigger_object: Some(TriggerObjectKind::ForEach(TriggerObject::Row)),
             condition: None,
             exec_body: Some(TriggerExecBody {
                 exec_type: TriggerExecBodyType::Function,
                 func_desc: FunctionDesc {
                     name: ObjectName::from(vec![Ident::new("emp_stamp")]),
-                    args: None,
+                    args: Some(vec![]),
                 }
             }),
+            statements_as: false,
             statements: None,
             characteristics: None,
-        }
+        })
     );
+}
+
+#[test]
+fn parse_create_trigger_compound_statement() {
+    mysql_and_generic().verified_stmt("CREATE TRIGGER mytrigger BEFORE INSERT ON mytable FOR EACH ROW BEGIN SET NEW.a = 1; SET NEW.b = 2; END");
+    mysql_and_generic().verified_stmt("CREATE TRIGGER tr AFTER INSERT ON t1 FOR EACH ROW BEGIN INSERT INTO t2 VALUES (NEW.id); END");
 }
 
 #[test]
@@ -3818,12 +4069,12 @@ fn parse_drop_trigger() {
     let drop_stmt = mysql().one_statement_parses_to(sql_drop_trigger, "");
     assert_eq!(
         drop_stmt,
-        Statement::DropTrigger {
+        Statement::DropTrigger(DropTrigger {
             if_exists: false,
             trigger_name: ObjectName::from(vec![Ident::new("emp_stamp")]),
             table_name: None,
             option: None,
-        }
+        })
     );
 }
 
@@ -3941,7 +4192,7 @@ fn test_variable_assignment_using_colon_equal() {
     let stmt = mysql().verified_stmt(sql_update);
 
     match stmt {
-        Statement::Update { assignments, .. } => {
+        Statement::Update(Update { assignments, .. }) => {
             assert_eq!(
                 assignments,
                 vec![Assignment {
@@ -4033,5 +4284,73 @@ fn parse_alter_table_drop_index() {
             mysql_and_generic().verified_stmt("ALTER TABLE tab DROP INDEX idx_index")
         ),
         AlterTableOperation::DropIndex { name } if name.value == "idx_index"
+    );
+}
+
+#[test]
+fn parse_json_member_of() {
+    mysql().verified_stmt(r#"SELECT 17 MEMBER OF('[23, "abc", 17, "ab", 10]')"#);
+    let sql = r#"SELECT 'ab' MEMBER OF('[23, "abc", 17, "ab", 10]')"#;
+    let stmt = mysql().verified_stmt(sql);
+    match stmt {
+        Statement::Query(query) => {
+            let select = query.body.as_select().unwrap();
+            assert_eq!(
+                select.projection,
+                vec![SelectItem::UnnamedExpr(Expr::MemberOf(MemberOf {
+                    value: Box::new(Expr::Value(
+                        Value::SingleQuotedString("ab".to_string()).into()
+                    )),
+                    array: Box::new(Expr::Value(
+                        Value::SingleQuotedString(r#"[23, "abc", 17, "ab", 10]"#.to_string())
+                            .into()
+                    )),
+                }))]
+            );
+        }
+        _ => panic!("Unexpected statement {stmt}"),
+    }
+}
+
+#[test]
+fn parse_show_charset() {
+    let res = mysql().verified_stmt("SHOW CHARACTER SET");
+    assert_eq!(
+        res,
+        Statement::ShowCharset(ShowCharset {
+            is_shorthand: false,
+            filter: None
+        })
+    );
+    mysql().verified_stmt("SHOW CHARACTER SET LIKE 'utf8mb4%'");
+    mysql().verified_stmt("SHOW CHARSET WHERE charset = 'utf8mb4%'");
+    mysql().verified_stmt("SHOW CHARSET LIKE 'utf8mb4%'");
+}
+
+#[test]
+fn test_ddl_with_index_using() {
+    let columns = "(name, age DESC)";
+    let using = "USING BTREE";
+
+    for sql in [
+        format!("CREATE INDEX idx_name ON test {using} {columns}"),
+        format!("CREATE TABLE foo (name VARCHAR(255), age INT, KEY idx_name {using} {columns})"),
+        format!("ALTER TABLE foo ADD KEY idx_name {using} {columns}"),
+        format!("CREATE INDEX idx_name ON test{columns} {using}"),
+        format!("CREATE TABLE foo (name VARCHAR(255), age INT, KEY idx_name {columns} {using})"),
+        format!("ALTER TABLE foo ADD KEY idx_name {columns} {using}"),
+    ] {
+        mysql_and_generic().verified_stmt(&sql);
+    }
+}
+
+#[test]
+fn test_create_index_options() {
+    mysql_and_generic()
+        .verified_stmt("CREATE INDEX idx_name ON t(c1, c2) USING HASH LOCK = SHARED");
+    mysql_and_generic()
+        .verified_stmt("CREATE INDEX idx_name ON t(c1, c2) USING BTREE ALGORITHM = INPLACE");
+    mysql_and_generic().verified_stmt(
+        "CREATE INDEX idx_name ON t(c1, c2) USING BTREE LOCK = EXCLUSIVE ALGORITHM = DEFAULT",
     );
 }
