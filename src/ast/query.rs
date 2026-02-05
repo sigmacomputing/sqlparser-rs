@@ -1945,7 +1945,7 @@ impl fmt::Display for TableFactor {
             TableFactor::PassThroughQuery { query, alias } => {
                 write!(f, "({query})")?;
                 if let Some(alias) = alias {
-                    write!(f, " AS {alias}")?;
+                    write!(f, " {alias}")?;
                 }
                 Ok(())
             }

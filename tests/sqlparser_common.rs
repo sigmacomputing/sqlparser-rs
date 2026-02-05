@@ -15220,6 +15220,30 @@ fn ast_with_pass_through_query() {
     };
 
     // After modifying the AST, the SQL representation should be different
+    assert_eq!(ast.to_string(), "SELECT * FROM (SELECT * FROM tx) ty");
+}
+
+#[test]
+fn ast_with_pass_through_query_with_explicit_alias() {
+    let sql = "SELECT * FROM t1 AS t2";
+    let mut ast = all_dialects().verified_stmt(sql);
+    let Statement::Query(ref mut query) = ast else {
+        panic!("Expected Query");
+    };
+    let SetExpr::Select(ref mut select) = *query.body else {
+        panic!("Expected SetExpr::Select");
+    };
+    let from = select.from.get_mut(0).unwrap();
+    from.relation = TableFactor::PassThroughQuery {
+        query: "SELECT * FROM tx".to_string(),
+        alias: Some(TableAlias {
+            explicit: true,
+            name: Ident::new("ty"),
+            columns: vec![],
+        }),
+    };
+
+    // After modifying the AST, the SQL representation should be different
     assert_eq!(ast.to_string(), "SELECT * FROM (SELECT * FROM tx) AS ty");
 }
 
