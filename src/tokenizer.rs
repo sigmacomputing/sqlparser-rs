@@ -1530,12 +1530,13 @@ impl<'a> Tokenizer<'a> {
                         }
                         Some('<') => self.consume_for_binop(chars, "<<", Token::ShiftLeft),
                         Some('-') if self.dialect.supports_geometric_types() => {
-                            chars.next(); // consume
-                            match chars.peek() {
-                                Some('>') => {
-                                    self.consume_for_binop(chars, "<->", Token::TwoWayArrow)
-                                }
-                                _ => self.start_binop_opt(chars, "<-", None),
+                            // `<->` is a geometric operator, but `<-123` means `< -123`.
+                            // If the sequence is not `<->`, keep `-` unconsumed so it can be tokenized as a unary minus.
+                            if chars.peekable.clone().nth(1) == Some('>') {
+                                chars.next(); // consume '-'
+                                self.consume_for_binop(chars, "<->", Token::TwoWayArrow)
+                            } else {
+                                self.start_binop(chars, "<", Token::Lt)
                             }
                         }
                         Some('^') if self.dialect.supports_geometric_types() => {
@@ -2495,7 +2496,8 @@ fn take_char_from_hex_digits(
 mod tests {
     use super::*;
     use crate::dialect::{
-        BigQueryDialect, ClickHouseDialect, HiveDialect, MsSqlDialect, MySqlDialect, SQLiteDialect,
+        BigQueryDialect, ClickHouseDialect, HiveDialect, MsSqlDialect, MySqlDialect,
+        RedshiftSqlDialect, SQLiteDialect,
     };
     use crate::test_utils::{all_dialects_except, all_dialects_where};
     use core::fmt::Debug;
@@ -4150,6 +4152,42 @@ mod tests {
                 Token::Period,
                 Token::make_word("_column", None),
             ],
+        );
+    }
+
+    #[test]
+    fn tokenize_lt_followed_by_negative_number() {
+        let sql = "SELECT a <-4000";
+        let dialect = RedshiftSqlDialect {};
+        let tokens = Tokenizer::new(&dialect, sql).tokenize().unwrap();
+        compare(
+            vec![
+                Token::make_keyword("SELECT"),
+                Token::Whitespace(Whitespace::Space),
+                Token::make_word("a", None),
+                Token::Whitespace(Whitespace::Space),
+                Token::Lt,
+                Token::Minus,
+                Token::Number("4000".to_string(), false),
+            ],
+            tokens,
+        );
+
+        // Ensure geometric `<->` is still recognized.
+        let tokens = Tokenizer::new(&dialect, "SELECT a <-> b")
+            .tokenize()
+            .unwrap();
+        compare(
+            vec![
+                Token::make_keyword("SELECT"),
+                Token::Whitespace(Whitespace::Space),
+                Token::make_word("a", None),
+                Token::Whitespace(Whitespace::Space),
+                Token::TwoWayArrow,
+                Token::Whitespace(Whitespace::Space),
+                Token::make_word("b", None),
+            ],
+            tokens,
         );
     }
 }
