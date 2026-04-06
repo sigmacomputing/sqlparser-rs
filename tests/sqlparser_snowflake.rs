@@ -1302,6 +1302,7 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: false,
                 path: vec![JsonPathElem::Bracket {
                     key: Expr::BinaryOp {
                         left: Box::new(Expr::value(number("2"))),
@@ -1322,6 +1323,7 @@ fn parse_semi_structured_data_traversal() {
         vec![SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: false,
                 path: vec![
                     JsonPathElem::Bracket {
                         key: Expr::value(number("0")),
@@ -1346,10 +1348,12 @@ fn parse_semi_structured_data_traversal() {
         Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: false,
                 path: vec![JsonPathElem::Bracket {
                     key: Expr::JsonAccess {
                         value: Box::new(Expr::Identifier(Ident::new("b"))),
                         path: JsonPath {
+                            has_colon: true,
                             path: vec![JsonPathElem::Dot {
                                 key: "c".to_owned(),
                                 quoted: false
@@ -1379,6 +1383,7 @@ fn parse_semi_structured_data_traversal() {
                 expr: Box::new(Expr::JsonAccess {
                     value: Box::new(Expr::Identifier(Ident::new("a"))),
                     path: JsonPath {
+                        has_colon: true,
                         path: vec![JsonPathElem::Dot {
                             key: "b".to_string(),
                             quoted: false
@@ -1390,6 +1395,7 @@ fn parse_semi_structured_data_traversal() {
                 format: None,
             }),
             path: JsonPath {
+                has_colon: false,
                 path: vec![JsonPathElem::Bracket {
                     key: Expr::value(number("1"))
                 }]
@@ -2782,6 +2788,13 @@ fn parse_top() {
     snowflake().one_statement_parses_to(
         "SELECT TOP 4 c1 FROM testtable",
         "SELECT TOP 4 c1 FROM testtable",
+    );
+}
+
+#[test]
+fn parse_percentile_cont_within_group_over() {
+    snowflake().verified_only_select(
+        "SELECT PERCENTILE_DISC(0.90) WITHIN GROUP (ORDER BY foo) OVER (PARTITION BY bar)",
     );
 }
 
