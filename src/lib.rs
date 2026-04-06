@@ -155,6 +155,7 @@
 #![allow(clippy::large_enum_variant)]
 // TODO: Fix and remove this.
 #![expect(clippy::unnecessary_unwrap)]
+#![forbid(clippy::unreachable)]
 
 // Allow proc-macros to find this crate
 extern crate self as sqlparser;
@@ -168,7 +169,11 @@ extern crate pretty_assertions;
 
 pub mod ast;
 #[macro_use]
+/// Submodules for SQL dialects.
 pub mod dialect;
+
+#[cfg(feature = "derive-dialect")]
+pub use dialect::derive_dialect;
 mod display_utils;
 pub mod keywords;
 pub mod parser;
