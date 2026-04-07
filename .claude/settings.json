@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(gh auth:*)",
+      "Bash(git remote:*)",
+      "Bash(gh repo:*)",
+      "Bash(git log:*)",
+      "Bash(git commit:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)"
+    ]
+  }
+}
