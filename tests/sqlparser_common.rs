@@ -18647,6 +18647,7 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: true,
                 path: vec![JsonPathElem::Dot {
                     key: "b".to_owned(),
                     quoted: false
@@ -18663,6 +18664,7 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: true,
                 path: vec![JsonPathElem::Dot {
                     key: "my long object key name".to_owned(),
                     quoted: true
@@ -18682,6 +18684,7 @@ fn parse_semi_structured_data_traversal() {
             SelectItem::UnnamedExpr(Expr::JsonAccess {
                 value: Box::new(Expr::Identifier(Ident::new("a"))),
                 path: JsonPath {
+                    has_colon: true,
                     path: vec![JsonPathElem::Dot {
                         key: "select".to_owned(),
                         quoted: false
@@ -18691,6 +18694,7 @@ fn parse_semi_structured_data_traversal() {
             SelectItem::UnnamedExpr(Expr::JsonAccess {
                 value: Box::new(Expr::Identifier(Ident::new("a"))),
                 path: JsonPath {
+                    has_colon: true,
                     path: vec![JsonPathElem::Dot {
                         key: "from".to_owned(),
                         quoted: false
@@ -18709,6 +18713,7 @@ fn parse_semi_structured_data_traversal() {
         vec![SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: true,
                 path: vec![
                     JsonPathElem::Dot {
                         key: "foo".to_owned(),
@@ -18736,6 +18741,7 @@ fn parse_semi_structured_data_traversal() {
         vec![SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
+                has_colon: true,
                 path: vec![
                     JsonPathElem::Dot {
                         key: "foo".to_owned(),
@@ -18762,6 +18768,9 @@ fn parse_array_subscript() {
             || d.is::<SnowflakeDialect>()
             || d.is::<SQLiteDialect>()
             || d.is::<RedshiftSqlDialect>()
+            // Databricks uses `:` for JSON path access (high precedence), which conflicts
+            // with array slice syntax `arr[1:2]`.
+            || d.is::<DatabricksDialect>()
     });
 
     dialects.verified_stmt("SELECT arr[1]");

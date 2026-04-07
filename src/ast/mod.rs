@@ -934,8 +934,11 @@ pub enum Expr {
     /// XXX not valid SQL syntax, this is a hack needed to support parameter substitution
     /// `[ NOT ] IN <in_expr>`
     InExpr {
+        /// Left-hand expression to test for membership.
         expr: Box<Expr>,
+        /// The expression providing the candidate values (used for parameter substitution).
         in_expr: Box<Expr>,
+        /// `true` when the `NOT` modifier is present.
         negated: bool,
     },
     /// `[ NOT ] IN UNNEST(array_expression)`

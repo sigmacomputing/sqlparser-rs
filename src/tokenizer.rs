@@ -788,13 +788,18 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+/// A token together with its byte-offset range in the source string.
 pub struct TokenWithRange {
+    /// The token.
     pub token: Token,
+    /// The byte offset of the start of the token in the source string.
     pub start: usize,
+    /// The byte offset of the end of the token in the source string.
     pub end: usize,
 }
 
 impl TokenWithRange {
+    /// Creates a new [`TokenWithRange`] with the given token and byte-offset range.
     pub fn new(token: Token, start: usize, end: usize) -> Self {
         Self { token, start, end }
     }
@@ -957,6 +962,7 @@ impl<'a> Tokenizer<'a> {
         Ok(twl.into_iter().map(|t| t.token).collect())
     }
 
+    /// Tokenize the statement and produce a vector of tokens with their byte-offset ranges.
     pub fn tokenize_with_range(&mut self) -> Result<Vec<TokenWithRange>, TokenizerError> {
         let mut tokens = Vec::<TokenWithRange>::new();
         let mut state = State {
@@ -1057,6 +1063,7 @@ impl<'a> Tokenizer<'a> {
         // Create a state for tracking position within the hint
         let mut state = State {
             peekable: hint_content.chars().peekable(),
+            pos: 0,
             line: span.start.line,
             col: span.start.column,
         };

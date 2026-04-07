@@ -718,16 +718,16 @@ fn parse_semi_structured_data_traversal() {
         select.projection[0]
     );
 
-    // asterisk for arrays
+    // colon bracket notation: a:['b'].c
     let sql = "SELECT a:['b'].c FROM t";
     let select = databricks().verified_only_select(sql);
     assert_eq!(
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
-                has_colon: true,
+                has_colon: false,
                 path: vec![
-                    JsonPathElem::Bracket {
+                    JsonPathElem::ColonBracket {
                         key: Expr::value(Value::SingleQuotedString("b".to_owned())),
                     },
                     JsonPathElem::Dot {

@@ -153,8 +153,6 @@
 // Splitting complex nodes (expressions, statements, types) into separate types
 // would bloat the API and hide intent. Extra memory is a worthwhile tradeoff.
 #![allow(clippy::large_enum_variant)]
-// TODO: Fix and remove this.
-#![expect(clippy::unnecessary_unwrap)]
 #![forbid(clippy::unreachable)]
 #![forbid(missing_docs)]
 
