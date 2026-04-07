@@ -4224,8 +4224,10 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // Parser is either looking at a : or a bracket expression.
     fn parse_json_path(&mut self) -> Result<JsonPath, ParserError> {
         let mut path = Vec::new();
+        let mut has_colon = false;
         loop {
             match self.next_token().token {
                 Token::Colon if path.is_empty() && self.peek_token_ref() == &Token::LBracket => {
@@ -4235,16 +4237,19 @@ impl<'a> Parser<'a> {
                     path.push(JsonPathElem::ColonBracket { key });
                 }
                 Token::Colon if path.is_empty() => {
-                    path.push(self.parse_json_path_object_key()?);
+                    has_colon = true;
+                    if *self.peek_token_ref() == Token::LBracket {
+                        path.push(self.parse_json_path_bracket_element()?);
+                    } else {
+                        path.push(self.parse_json_path_object_key()?);
+                    }
                 }
                 Token::Period if !path.is_empty() => {
                     path.push(self.parse_json_path_object_key()?);
                 }
                 Token::LBracket => {
-                    let key = self.parse_wildcard_expr()?;
-                    self.expect_token(&Token::RBracket)?;
-
-                    path.push(JsonPathElem::Bracket { key });
+                    self.prev_token();
+                    path.push(self.parse_json_path_bracket_element()?);
                 }
                 _ => {
                     self.prev_token();
@@ -4254,7 +4259,23 @@ impl<'a> Parser<'a> {
         }
 
         debug_assert!(!path.is_empty());
-        Ok(JsonPath { path })
+        Ok(JsonPath { has_colon, path })
+    }
+
+    /// Parses a single bracketed element in a JSON path expression, including both brackets.
+    fn parse_json_path_bracket_element(&mut self) -> Result<JsonPathElem, ParserError> {
+        self.expect_token(&Token::LBracket)?;
+        let elem = if *self.peek_token_ref() == Token::Mul
+            && self.dialect.supports_semi_structured_array_all_elements()
+        {
+            self.expect_token(&Token::Mul)?;
+            JsonPathElem::AllElements
+        } else {
+            let key = self.parse_expr()?;
+            JsonPathElem::Bracket { key }
+        };
+        self.expect_token(&Token::RBracket)?;
+        Ok(elem)
     }
 
     /// Parses the parens following the `[ NOT ] IN` operator.
@@ -4271,25 +4292,34 @@ impl<'a> Parser<'a> {
                 negated,
             });
         }
-        self.expect_token(&Token::LParen)?;
-        let in_op = match self.maybe_parse(|p| p.parse_query())? {
-            Some(subquery) => Expr::InSubquery {
-                expr: Box::new(expr),
-                subquery,
-                negated,
-            },
-            None => Expr::InList {
-                expr: Box::new(expr),
-                list: if self.dialect.supports_in_empty_list() {
-                    self.parse_comma_separated0(Parser::parse_expr, Token::RParen)?
-                } else {
-                    self.parse_comma_separated(Parser::parse_expr)?
+        if self.consume_token(&Token::LParen) {
+            let in_op = match self.maybe_parse(|p| p.parse_query())? {
+                Some(subquery) => Expr::InSubquery {
+                    expr: Box::new(expr),
+                    subquery,
+                    negated,
                 },
+                None => Expr::InList {
+                    expr: Box::new(expr),
+                    list: if self.dialect.supports_in_empty_list() {
+                        self.parse_comma_separated0(Parser::parse_expr, Token::RParen)?
+                    } else {
+                        self.parse_comma_separated(Parser::parse_expr)?
+                    },
+                    negated,
+                },
+            };
+            self.expect_token(&Token::RParen)?;
+            Ok(in_op)
+        } else {
+            // parse an expr
+            let in_expr = self.parse_expr()?;
+            Ok(Expr::InExpr {
+                expr: Box::new(expr),
+                in_expr: Box::new(in_expr),
                 negated,
-            },
-        };
-        self.expect_token(&Token::RParen)?;
-        Ok(in_op)
+            })
+        }
     }
 
     /// Parses `BETWEEN <low> AND <high>`, assuming the `BETWEEN` keyword was already consumed.
@@ -15586,7 +15616,8 @@ impl<'a> Parser<'a> {
                         | TableFactor::Unpivot { alias, .. }
                         | TableFactor::MatchRecognize { alias, .. }
                         | TableFactor::SemanticView { alias, .. }
-                        | TableFactor::NestedJoin { alias, .. } => {
+                        | TableFactor::NestedJoin { alias, .. }
+                        | TableFactor::PassThroughQuery { alias, .. } => {
                             // but not `FROM (mytable AS alias1) AS alias2`.
                             if let Some(inner_alias) = alias {
                                 return Err(ParserError::ParserError(format!(
