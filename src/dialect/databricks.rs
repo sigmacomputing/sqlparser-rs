@@ -22,7 +22,8 @@ use crate::tokenizer::Token;
 /// A [`Dialect`] for [Databricks SQL](https://www.databricks.com/)
 ///
 /// See <https://docs.databricks.com/en/sql/language-manual/index.html>.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DatabricksDialect;
 
 impl Dialect for DatabricksDialect {
@@ -62,6 +63,11 @@ impl Dialect for DatabricksDialect {
         true
     }
 
+    /// <https://docs.databricks.com/gcp/en/delta/history#delta-time-travel-syntax>
+    fn supports_table_versioning(&self) -> bool {
+        true
+    }
+
     fn supports_lambda_functions(&self) -> bool {
         true
     }
@@ -92,6 +98,21 @@ impl Dialect for DatabricksDialect {
 
     /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-groupby.html>
     fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-values.html>
+    fn supports_values_as_table_factor(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/delta-optimize.html>
+    fn supports_optimize_table(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/functions/bangsign>
+    fn supports_bang_not_operator(&self) -> bool {
         true
     }
 }
