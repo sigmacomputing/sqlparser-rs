@@ -36,7 +36,7 @@ pub enum UnaryOperator {
     /// `@-@` Length or circumference (PostgreSQL/Redshift geometric operator)
     /// see <https://www.postgresql.org/docs/9.5/functions-geometry.html>
     AtDashAt,
-    /// Unary logical not operator: e.g. `! false` (Hive-specific)
+    /// Unary logical not operator: e.g. `!false`
     BangNot,
     /// Bitwise Not, e.g. `~9`
     BitwiseNot,

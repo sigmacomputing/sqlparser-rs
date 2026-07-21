@@ -90,6 +90,11 @@ impl Dialect for DatabricksDialect {
         true
     }
 
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/functions/bangsign>
+    fn supports_bang_not_operator(&self) -> bool {
+        true
+    }
+
     /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-groupby.html>
     fn supports_group_by_with_modifier(&self) -> bool {
         true

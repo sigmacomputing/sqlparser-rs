@@ -111,6 +111,13 @@ fn test_databricks_exists() {
 }
 
 #[test]
+fn test_databricks_bang_not() {
+    databricks().verified_expr("!true");
+    databricks().verified_expr("!false");
+    databricks().verified_expr("!NULL");
+}
+
+#[test]
 fn test_databricks_lambdas() {
     #[rustfmt::skip]
     let sql = concat!(
