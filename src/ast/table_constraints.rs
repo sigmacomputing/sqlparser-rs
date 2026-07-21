@@ -26,7 +26,7 @@ use crate::tokenizer::Span;
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -101,6 +101,28 @@ pub enum TableConstraint {
     /// [1]: https://dev.mysql.com/doc/refman/8.0/en/fulltext-natural-language.html
     /// [2]: https://dev.mysql.com/doc/refman/8.0/en/spatial-types.html
     FulltextOrSpatial(FullTextOrSpatialConstraint),
+    /// PostgreSQL [definition][1] for promoting an existing unique index to a
+    /// `PRIMARY KEY` constraint:
+    ///
+    /// `[ CONSTRAINT constraint_name ] PRIMARY KEY USING INDEX index_name
+    ///   [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]`
+    ///
+    /// [1]: https://www.postgresql.org/docs/current/sql-altertable.html
+    PrimaryKeyUsingIndex(ConstraintUsingIndex),
+    /// PostgreSQL [definition][1] for promoting an existing unique index to a
+    /// `UNIQUE` constraint:
+    ///
+    /// `[ CONSTRAINT constraint_name ] UNIQUE USING INDEX index_name
+    ///   [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]`
+    ///
+    /// [1]: https://www.postgresql.org/docs/current/sql-altertable.html
+    UniqueUsingIndex(ConstraintUsingIndex),
+    /// `EXCLUDE` constraint.
+    ///
+    /// `[ CONSTRAINT <name> ] EXCLUDE [ USING <index_method> ] ( <element> WITH <operator> [, ...] ) [ INCLUDE (<cols>) ] [ WHERE (<predicate>) ]`
+    ///
+    /// [PostgreSQL](https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-EXCLUDE)
+    Exclude(ExcludeConstraint),
 }
 
 impl From<UniqueConstraint> for TableConstraint {
@@ -139,6 +161,12 @@ impl From<FullTextOrSpatialConstraint> for TableConstraint {
     }
 }
 
+impl From<ExcludeConstraint> for TableConstraint {
+    fn from(constraint: ExcludeConstraint) -> Self {
+        TableConstraint::Exclude(constraint)
+    }
+}
+
 impl fmt::Display for TableConstraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -148,6 +176,9 @@ impl fmt::Display for TableConstraint {
             TableConstraint::Check(constraint) => constraint.fmt(f),
             TableConstraint::Index(constraint) => constraint.fmt(f),
             TableConstraint::FulltextOrSpatial(constraint) => constraint.fmt(f),
+            TableConstraint::PrimaryKeyUsingIndex(c) => c.fmt_with_keyword(f, "PRIMARY KEY"),
+            TableConstraint::UniqueUsingIndex(c) => c.fmt_with_keyword(f, "UNIQUE"),
+            TableConstraint::Exclude(constraint) => constraint.fmt(f),
         }
     }
 }
@@ -155,10 +186,13 @@ impl fmt::Display for TableConstraint {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// A `CHECK` constraint (`[ CONSTRAINT <name> ] CHECK (<expr>) [[NOT] ENFORCED]`).
 pub struct CheckConstraint {
+    /// Optional constraint name.
     pub name: Option<Ident>,
+    /// The boolean expression the CHECK constraint enforces.
     pub expr: Box<Expr>,
-    /// MySQL-specific syntax
+    /// MySQL-specific `ENFORCED` / `NOT ENFORCED` flag.
     /// <https://dev.mysql.com/doc/refman/8.4/en/create-table.html>
     pub enforced: Option<bool>,
 }
@@ -197,16 +231,24 @@ impl crate::ast::Spanned for CheckConstraint {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct ForeignKeyConstraint {
+    /// Optional constraint name.
     pub name: Option<Ident>,
-    /// MySQL-specific field
+    /// MySQL-specific index name associated with the foreign key.
     /// <https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html>
     pub index_name: Option<Ident>,
+    /// Columns in the local table that participate in the foreign key.
     pub columns: Vec<Ident>,
+    /// Referenced foreign table name.
     pub foreign_table: ObjectName,
+    /// Columns in the referenced table.
     pub referred_columns: Vec<Ident>,
+    /// Action to perform `ON DELETE`.
     pub on_delete: Option<ReferentialAction>,
+    /// Action to perform `ON UPDATE`.
     pub on_update: Option<ReferentialAction>,
+    /// Optional `MATCH` kind (FULL | PARTIAL | SIMPLE).
     pub match_kind: Option<ConstraintReferenceMatchKind>,
+    /// Optional characteristics (e.g., `DEFERRABLE`).
     pub characteristics: Option<ConstraintCharacteristics>,
 }
 
@@ -344,6 +386,7 @@ pub struct IndexConstraint {
     /// Referred column identifier list.
     pub columns: Vec<IndexColumn>,
     /// Optional index options such as `USING`; see [`IndexOption`].
+    /// Options applied to the index (e.g., `COMMENT`, `WITH` options).
     pub index_options: Vec<IndexOption>,
 }
 
@@ -413,7 +456,9 @@ pub struct PrimaryKeyConstraint {
     pub index_type: Option<IndexType>,
     /// Identifiers of the columns that form the primary key.
     pub columns: Vec<IndexColumn>,
+    /// Optional index options such as `USING`.
     pub index_options: Vec<IndexOption>,
+    /// Optional characteristics like `DEFERRABLE`.
     pub characteristics: Option<ConstraintCharacteristics>,
 }
 
@@ -458,6 +503,7 @@ impl crate::ast::Spanned for PrimaryKeyConstraint {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// Unique constraint definition.
 pub struct UniqueConstraint {
     /// Constraint name.
     ///
@@ -473,7 +519,9 @@ pub struct UniqueConstraint {
     pub index_type: Option<IndexType>,
     /// Identifiers of the columns that are unique.
     pub columns: Vec<IndexColumn>,
+    /// Optional index options such as `USING`.
     pub index_options: Vec<IndexOption>,
+    /// Optional characteristics like `DEFERRABLE`.
     pub characteristics: Option<ConstraintCharacteristics>,
     /// Optional Postgres nulls handling: `[ NULLS [ NOT ] DISTINCT ]`
     pub nulls_distinct: NullsDistinctOption,
@@ -515,6 +563,156 @@ impl crate::ast::Spanned for UniqueConstraint {
                 .chain(self.index_name.iter().map(|i| i.span))
                 .chain(self.columns.iter().map(|i| i.span()))
                 .chain(self.characteristics.iter().map(|i| i.span())),
+        )
+    }
+}
+
+/// PostgreSQL constraint that promotes an existing unique index to a table constraint.
+///
+/// `[ CONSTRAINT constraint_name ] { UNIQUE | PRIMARY KEY } USING INDEX index_name
+///   [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]`
+///
+/// See <https://www.postgresql.org/docs/current/sql-altertable.html>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ConstraintUsingIndex {
+    /// Optional constraint name.
+    pub name: Option<Ident>,
+    /// The name of the existing unique index to promote.
+    pub index_name: Ident,
+    /// Optional characteristics like `DEFERRABLE`.
+    pub characteristics: Option<ConstraintCharacteristics>,
+}
+
+impl ConstraintUsingIndex {
+    /// Format as `[CONSTRAINT name] <keyword> USING INDEX index_name [characteristics]`.
+    pub fn fmt_with_keyword(&self, f: &mut fmt::Formatter, keyword: &str) -> fmt::Result {
+        use crate::ast::ddl::{display_constraint_name, display_option_spaced};
+        write!(
+            f,
+            "{}{} USING INDEX {}",
+            display_constraint_name(&self.name),
+            keyword,
+            self.index_name,
+        )?;
+        write!(f, "{}", display_option_spaced(&self.characteristics))?;
+        Ok(())
+    }
+}
+
+impl crate::ast::Spanned for ConstraintUsingIndex {
+    fn span(&self) -> Span {
+        let start = self
+            .name
+            .as_ref()
+            .map(|i| i.span)
+            .unwrap_or(self.index_name.span);
+        let end = self
+            .characteristics
+            .as_ref()
+            .map(|c| c.span())
+            .unwrap_or(self.index_name.span);
+        start.union(&end)
+    }
+}
+
+/// The operator that follows `WITH` in an `EXCLUDE` constraint element.
+///
+/// [PostgreSQL](https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-EXCLUDE)
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum ExcludeConstraintOperator {
+    /// A single operator token, e.g. `=`, `&&`, `<->`.
+    Token(String),
+    /// Postgres schema-qualified form: `OPERATOR(schema.op)`.
+    PGOperator(Vec<String>),
+}
+
+impl fmt::Display for ExcludeConstraintOperator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ExcludeConstraintOperator::Token(token) => f.write_str(token),
+            ExcludeConstraintOperator::PGOperator(parts) => {
+                write!(f, "OPERATOR({})", display_separated(parts, "."))
+            }
+        }
+    }
+}
+
+/// One element in an `EXCLUDE` constraint's element list.
+///
+/// [PostgreSQL](https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-EXCLUDE)
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ExcludeConstraintElement {
+    /// The index column (`{ column_name | ( expression ) } [ opclass ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]`).
+    pub column: IndexColumn,
+    /// The exclusion operator.
+    pub operator: ExcludeConstraintOperator,
+}
+
+impl fmt::Display for ExcludeConstraintElement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} WITH {}", self.column, self.operator)
+    }
+}
+
+/// An `EXCLUDE` constraint.
+///
+/// [PostgreSQL](https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-EXCLUDE)
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ExcludeConstraint {
+    /// Optional constraint name.
+    pub name: Option<Ident>,
+    /// Optional index method (e.g. `gist`, `spgist`).
+    pub index_method: Option<Ident>,
+    /// The list of index expressions with their exclusion operators.
+    pub elements: Vec<ExcludeConstraintElement>,
+    /// Optional list of additional columns to include in the index.
+    pub include: Vec<Ident>,
+    /// Optional `WHERE` predicate to restrict the constraint to a subset of rows.
+    pub where_clause: Option<Box<Expr>>,
+    /// Optional constraint characteristics like `DEFERRABLE`.
+    pub characteristics: Option<ConstraintCharacteristics>,
+}
+
+impl fmt::Display for ExcludeConstraint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use crate::ast::ddl::display_constraint_name;
+        write!(f, "{}EXCLUDE", display_constraint_name(&self.name))?;
+        if let Some(method) = &self.index_method {
+            write!(f, " USING {method}")?;
+        }
+        write!(f, " ({})", display_comma_separated(&self.elements))?;
+        if !self.include.is_empty() {
+            write!(f, " INCLUDE ({})", display_comma_separated(&self.include))?;
+        }
+        if let Some(predicate) = &self.where_clause {
+            write!(f, " WHERE ({predicate})")?;
+        }
+        if let Some(characteristics) = &self.characteristics {
+            write!(f, " {characteristics}")?;
+        }
+        Ok(())
+    }
+}
+
+impl crate::ast::Spanned for ExcludeConstraint {
+    fn span(&self) -> Span {
+        Span::union_iter(
+            self.name
+                .iter()
+                .map(|i| i.span)
+                .chain(self.index_method.iter().map(|i| i.span))
+                .chain(self.elements.iter().map(|e| e.span()))
+                .chain(self.include.iter().map(|i| i.span))
+                .chain(self.where_clause.iter().map(|e| e.span()))
+                .chain(self.characteristics.iter().map(|c| c.span())),
         )
     }
 }

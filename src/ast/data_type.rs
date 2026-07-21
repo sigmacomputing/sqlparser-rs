@@ -32,7 +32,9 @@ use super::{value::escape_single_quote_string, ColumnDef};
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// A member of an ENUM type.
 pub enum EnumMember {
+    /// Just a name.
     Name(String),
     /// ClickHouse allows to specify an integer value for each enum value.
     ///
@@ -437,10 +439,11 @@ pub enum DataType {
     Custom(ObjectName, Vec<String>),
     /// Arrays.
     Array(ArrayElemTypeDef),
-    /// Map, see [ClickHouse].
+    /// Map, see [ClickHouse], [Hive].
     ///
     /// [ClickHouse]: https://clickhouse.com/docs/en/sql-reference/data-types/map
-    Map(Box<DataType>, Box<DataType>),
+    /// [Hive]: https://hive.apache.org/docs/latest/language/languagemanual-types/
+    Map(Box<DataType>, Box<DataType>, MapBracketKind),
     /// Tuple, see [ClickHouse].
     ///
     /// [ClickHouse]: https://clickhouse.com/docs/en/sql-reference/data-types/tuple
@@ -783,9 +786,14 @@ impl fmt::Display for DataType {
             DataType::LowCardinality(data_type) => {
                 write!(f, "LowCardinality({data_type})")
             }
-            DataType::Map(key_data_type, value_data_type) => {
-                write!(f, "Map({key_data_type}, {value_data_type})")
-            }
+            DataType::Map(key_data_type, value_data_type, bracket) => match bracket {
+                MapBracketKind::Parentheses => {
+                    write!(f, "Map({key_data_type}, {value_data_type})")
+                }
+                MapBracketKind::AngleBrackets => {
+                    write!(f, "MAP<{key_data_type}, {value_data_type}>")
+                }
+            },
             DataType::Tuple(fields) => {
                 write!(f, "Tuple({})", display_comma_separated(fields))
             }
@@ -892,13 +900,24 @@ fn format_clickhouse_datetime_precision_and_timezone(
 }
 
 /// Type of brackets used for `STRUCT` literals.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum StructBracketKind {
     /// Example: `STRUCT(a INT, b STRING)`
     Parentheses,
     /// Example: `STRUCT<a INT, b STRING>`
+    AngleBrackets,
+}
+
+/// Type of brackets used for `MAP` types.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum MapBracketKind {
+    /// Example: `Map(String, UInt16)`
+    Parentheses,
+    /// Example: `MAP<STRING, INT>`
     AngleBrackets,
 }
 
@@ -957,18 +976,31 @@ impl fmt::Display for TimezoneInfo {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum IntervalFields {
+    /// `YEAR` field
     Year,
+    /// `MONTH` field
     Month,
+    /// `DAY` field
     Day,
+    /// `HOUR` field
     Hour,
+    /// `MINUTE` field
     Minute,
+    /// `SECOND` field
     Second,
+    /// `YEAR TO MONTH` field
     YearToMonth,
+    /// `DAY TO HOUR` field
     DayToHour,
+    /// `DAY TO MINUTE` field
     DayToMinute,
+    /// `DAY TO SECOND` field
     DayToSecond,
+    /// `HOUR TO MINUTE` field
     HourToMinute,
+    /// `HOUR TO SECOND` field
     HourToSecond,
+    /// `MINUTE TO SECOND` field
     MinuteToSecond,
 }
 
@@ -1000,11 +1032,11 @@ impl fmt::Display for IntervalFields {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum ExactNumberInfo {
-    /// No additional information, e.g. `DECIMAL`
+    /// No additional information, e.g. `DECIMAL`.
     None,
-    /// Only precision information, e.g. `DECIMAL(10)`
+    /// Only precision information, e.g. `DECIMAL(10)`.
     Precision(u64),
-    /// Precision and scale information, e.g. `DECIMAL(10,2)`
+    /// Precision and scale information, e.g. `DECIMAL(10,2)`.
     PrecisionAndScale(u64, i64),
 }
 
@@ -1031,13 +1063,14 @@ impl fmt::Display for ExactNumberInfo {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum CharacterLength {
+    /// Integer length with optional unit (e.g. `CHAR(10)` or `VARCHAR(10 CHARACTERS)`).
     IntegerLength {
         /// Default (if VARYING) or maximum (if not VARYING) length
         length: u64,
         /// Optional unit. If not informed, the ANSI handles it as CHARACTERS implicitly
         unit: Option<CharLengthUnits>,
     },
-    /// VARCHAR(MAX) or NVARCHAR(MAX), used in T-SQL (Microsoft SQL Server)
+    /// VARCHAR(MAX) or NVARCHAR(MAX), used in T-SQL (Microsoft SQL Server).
     Max,
 }
 
@@ -1087,12 +1120,16 @@ impl fmt::Display for CharLengthUnits {
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// Information about [binary length][1], including length and possibly unit.
+///
+/// [1]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#binary-length
 pub enum BinaryLength {
+    /// Integer length for binary types (e.g. `VARBINARY(100)`).
     IntegerLength {
         /// Default (if VARYING)
         length: u64,
     },
-    /// VARBINARY(MAX) used in T-SQL (Microsoft SQL Server)
+    /// VARBINARY(MAX) used in T-SQL (Microsoft SQL Server).
     Max,
 }
 
@@ -1118,13 +1155,13 @@ impl fmt::Display for BinaryLength {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum ArrayElemTypeDef {
-    /// `ARRAY`
+    /// Use `ARRAY` style without an explicit element type.
     None,
-    /// `ARRAY<INT>`
+    /// Angle-bracket style, e.g. `ARRAY<INT>`.
     AngleBracket(Box<DataType>),
-    /// `INT[]` or `INT[2]`
+    /// Square-bracket style, e.g. `INT[]` or `INT[2]`.
     SquareBracket(Box<DataType>, Option<u64>),
-    /// `Array(Int64)`
+    /// Parenthesis style, e.g. `Array(Int64)`.
     Parenthesis(Box<DataType>),
 }
 
@@ -1136,12 +1173,19 @@ pub enum ArrayElemTypeDef {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum GeometricTypeKind {
+    /// Point geometry
     Point,
+    /// Line geometry
     Line,
+    /// Line segment geometry
     LineSegment,
+    /// Box geometry
     GeometricBox,
+    /// Path geometry
     GeometricPath,
+    /// Polygon geometry
     Polygon,
+    /// Circle geometry
     Circle,
 }
 

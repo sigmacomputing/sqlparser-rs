@@ -40,8 +40,10 @@ fn parse_map_access_expr() {
     let select = clickhouse().verified_only_select(sql);
     assert_eq!(
         Select {
-            distinct: None,
             select_token: AttachedToken::empty(),
+            optimizer_hints: vec![],
+            distinct: None,
+            select_modifiers: None,
             top: None,
             top_before_distinct: false,
             projection: vec![UnnamedExpr(Expr::CompoundFieldAccess {
@@ -101,7 +103,7 @@ fn parse_map_access_expr() {
             window_before_qualify: false,
             qualify: None,
             value_table_mode: None,
-            connect_by: None,
+            connect_by: vec![],
             flavor: SelectFlavor::Standard,
         },
         select
@@ -232,6 +234,65 @@ fn parse_create_table() {
 }
 
 #[test]
+fn parse_create_table_partition_by_after_order_by() {
+    // ClickHouse DDL places PARTITION BY after ORDER BY.
+    // MergeTree() is canonicalized to MergeTree and type names are uppercased.
+    clickhouse().one_statement_parses_to(
+        concat!(
+            "CREATE TABLE IF NOT EXISTS \"MyTable\" (`col1` Int64, `col2` Int32) ",
+            "ENGINE = MergeTree() ",
+            "PRIMARY KEY (toDate(toDateTime(`col2`)), `col1`, `col2`) ",
+            "ORDER BY (toDate(toDateTime(`col2`)), `col1`, `col2`) ",
+            "PARTITION BY col1 % 64"
+        ),
+        concat!(
+            "CREATE TABLE IF NOT EXISTS \"MyTable\" (`col1` INT64, `col2` Int32) ",
+            "ENGINE = MergeTree ",
+            "PRIMARY KEY (toDate(toDateTime(`col2`)), `col1`, `col2`) ",
+            "ORDER BY (toDate(toDateTime(`col2`)), `col1`, `col2`) ",
+            "PARTITION BY col1 % 64"
+        ),
+    );
+
+    // PARTITION BY after ORDER BY works with both ClickHouseDialect and GenericDialect
+    clickhouse_and_generic()
+        .verified_stmt("CREATE TABLE t (a INT) ENGINE = MergeTree ORDER BY a PARTITION BY a");
+
+    // Arithmetic expression in PARTITION BY (roundtrip)
+    clickhouse_and_generic()
+        .verified_stmt("CREATE TABLE t (a INT) ENGINE = MergeTree ORDER BY a PARTITION BY a % 64");
+
+    // AST: partition_by is populated with the correct expression
+    match clickhouse_and_generic()
+        .verified_stmt("CREATE TABLE t (a INT) ENGINE = MergeTree ORDER BY a PARTITION BY a % 64")
+    {
+        Statement::CreateTable(CreateTable { partition_by, .. }) => {
+            assert_eq!(
+                partition_by,
+                Some(Box::new(BinaryOp {
+                    left: Box::new(Identifier(Ident::new("a"))),
+                    op: BinaryOperator::Modulo,
+                    right: Box::new(Expr::Value(
+                        Value::Number("64".parse().unwrap(), false).with_empty_span(),
+                    )),
+                }))
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    // Function call expression in PARTITION BY (ClickHouse-specific function)
+    clickhouse().verified_stmt(
+        "CREATE TABLE t (d DATE) ENGINE = MergeTree ORDER BY d PARTITION BY toYYYYMM(d)",
+    );
+
+    // Negative: PARTITION BY with no expression should fail
+    clickhouse_and_generic()
+        .parse_sql_statements("CREATE TABLE t (a INT) ENGINE = MergeTree ORDER BY a PARTITION BY")
+        .expect_err("PARTITION BY with no expression should fail");
+}
+
+#[test]
 fn parse_insert_into_function() {
     clickhouse().verified_stmt(r#"INSERT INTO TABLE FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
     clickhouse().verified_stmt(r#"INSERT INTO FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
@@ -329,7 +390,7 @@ fn parse_alter_table_add_projection() {
                             kind: OrderByKind::Expressions(vec![OrderByExpr {
                                 expr: Identifier(Ident::new("b")),
                                 options: OrderByOptions {
-                                    asc: None,
+                                    sort: None,
                                     nulls_first: None,
                                 },
                                 with_fill: None,
@@ -706,7 +767,8 @@ fn parse_create_table_with_nested_data_types() {
                         name: Ident::new("m"),
                         data_type: DataType::Map(
                             Box::new(DataType::String(None)),
-                            Box::new(DataType::UInt16)
+                            Box::new(DataType::UInt16),
+                            MapBracketKind::Parentheses
                         ),
                         options: vec![],
                     },
@@ -1157,7 +1219,7 @@ fn parse_select_order_by_with_fill_interpolate() {
                 OrderByExpr {
                     expr: Expr::Identifier(Ident::new("fname")),
                     options: OrderByOptions {
-                        asc: Some(true),
+                        sort: Some(OrderBySort::Asc),
                         nulls_first: Some(true),
                     },
                     with_fill: Some(WithFill {
@@ -1169,7 +1231,7 @@ fn parse_select_order_by_with_fill_interpolate() {
                 OrderByExpr {
                     expr: Expr::Identifier(Ident::new("lname")),
                     options: OrderByOptions {
-                        asc: Some(false),
+                        sort: Some(OrderBySort::Desc),
                         nulls_first: Some(false),
                     },
                     with_fill: Some(WithFill {
@@ -1725,6 +1787,86 @@ fn test_parse_not_null_in_column_options() {
         ),
         canonical,
     );
+}
+
+#[test]
+fn parse_array_join() {
+    // ARRAY JOIN works with both ClickHouseDialect and GenericDialect (roundtrip)
+    clickhouse_and_generic().verified_stmt("SELECT x FROM t ARRAY JOIN arr AS x");
+
+    // AST: join_operator is the unit variant ArrayJoin (no constraint)
+    match clickhouse_and_generic().verified_stmt("SELECT x FROM t ARRAY JOIN arr AS x") {
+        Statement::Query(query) => {
+            let select = query.body.as_select().unwrap();
+            let join = &select.from[0].joins[0];
+            assert_eq!(join.join_operator, JoinOperator::ArrayJoin);
+        }
+        _ => unreachable!(),
+    }
+
+    // Combined: regular JOIN followed by ARRAY JOIN
+    clickhouse_and_generic()
+        .verified_stmt("SELECT x FROM t JOIN u ON t.id = u.id ARRAY JOIN arr AS x");
+
+    // Negative: ARRAY JOIN with no table expression should fail
+    clickhouse_and_generic()
+        .parse_sql_statements("SELECT x FROM t ARRAY JOIN")
+        .expect_err("ARRAY JOIN requires a table expression");
+}
+
+#[test]
+fn parse_left_array_join() {
+    // LEFT ARRAY JOIN preserves rows with empty/null arrays (roundtrip)
+    clickhouse_and_generic().verified_stmt("SELECT x FROM t LEFT ARRAY JOIN arr AS x");
+
+    // AST: join_operator is LeftArrayJoin
+    match clickhouse_and_generic().verified_stmt("SELECT x FROM t LEFT ARRAY JOIN arr AS x") {
+        Statement::Query(query) => {
+            let select = query.body.as_select().unwrap();
+            let join = &select.from[0].joins[0];
+            assert_eq!(join.join_operator, JoinOperator::LeftArrayJoin);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_inner_array_join() {
+    // INNER ARRAY JOIN filters rows with empty/null arrays (roundtrip)
+    clickhouse_and_generic().verified_stmt("SELECT x FROM t INNER ARRAY JOIN arr AS x");
+
+    // AST: join_operator is InnerArrayJoin
+    match clickhouse_and_generic().verified_stmt("SELECT x FROM t INNER ARRAY JOIN arr AS x") {
+        Statement::Query(query) => {
+            let select = query.body.as_select().unwrap();
+            let join = &select.from[0].joins[0];
+            assert_eq!(join.join_operator, JoinOperator::InnerArrayJoin);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_in_unparenthesized_expr() {
+    // IN [expr] parses to IN ([expr]) and does not cause regressions
+    clickhouse().expr_parses_to("x IN 'a'", "x IN ('a')");
+
+    // The branch must not fire when the next token is `(` (regressions).
+    clickhouse().verified_expr("x IN (1, 2, 3)");
+    clickhouse().verified_stmt("SELECT * FROM t WHERE x IN (SELECT y FROM u)");
+}
+
+#[test]
+fn parse_in_unparenthesized_dictionary_placeholder() {
+    // IN [{placeholder:Type}] parses to IN ({placholder:Type})
+    clickhouse().expr_parses_to("x IN {ids:Array(UInt64)}", "x IN ({ids: Array(UInt64)})");
+    clickhouse().expr_parses_to(
+        "x NOT IN {ids:Array(UInt64)}",
+        "x NOT IN ({ids: Array(UInt64)})",
+    );
+    clickhouse().verified_expr("x IN ({ids: Array(UInt64)})");
+    // Precedence: the trailing `AND` is not swallowed.
+    clickhouse().verified_expr("x IN ({p: Array(UInt64)}) AND y = 1");
 }
 
 fn clickhouse() -> TestedDialects {

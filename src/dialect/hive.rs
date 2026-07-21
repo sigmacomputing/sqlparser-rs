@@ -18,12 +18,18 @@
 use crate::dialect::Dialect;
 
 /// A [`Dialect`] for [Hive](https://hive.apache.org/).
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HiveDialect {}
 
 impl Dialect for HiveDialect {
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
         (ch == '"') || (ch == '`')
+    }
+
+    /// See <https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-RulesforColumnNames>
+    fn identifier_quote_style(&self, _identifier: &str) -> Option<char> {
+        Some('`')
     }
 
     fn is_identifier_start(&self, ch: char) -> bool {
@@ -69,6 +75,18 @@ impl Dialect for HiveDialect {
 
     /// See <https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=30151323#EnhancedAggregation,Cube,GroupingandRollup-CubesandRollupsr>
     fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+
+    // TODO: The parsing of the FROM keyword seems wrong, as it happens within the CTE.
+    // See https://github.com/apache/datafusion-sqlparser-rs/issues/2236 for more details.
+    /// See <https://hive.apache.org/docs/latest/language/common-table-expression/>
+    fn supports_from_first_insert(&self) -> bool {
+        true
+    }
+
+    /// See <https://hive.apache.org/docs/latest/language/languagemanual-types/>
+    fn supports_map_literal_with_angle_brackets(&self) -> bool {
         true
     }
 }

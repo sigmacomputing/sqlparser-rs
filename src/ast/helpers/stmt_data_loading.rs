@@ -34,11 +34,17 @@ use sqlparser_derive::{Visit, VisitMut};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// Parameters for a named stage object used in data loading/unloading.
 pub struct StageParamsObject {
+    /// Optional URL for the stage.
     pub url: Option<String>,
+    /// Encryption-related key/value options.
     pub encryption: KeyValueOptions,
+    /// Optional endpoint string.
     pub endpoint: Option<String>,
+    /// Optional storage integration identifier.
     pub storage_integration: Option<String>,
+    /// Credentials for accessing the stage.
     pub credentials: KeyValueOptions,
 }
 
@@ -48,7 +54,9 @@ pub struct StageParamsObject {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum StageLoadSelectItemKind {
+    /// A standard SQL select item expression.
     SelectItem(SelectItem),
+    /// A Snowflake-specific select item used for stage loading.
     StageLoadSelectItem(StageLoadSelectItem),
 }
 
@@ -64,27 +72,28 @@ impl fmt::Display for StageLoadSelectItemKind {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// A single item in the `SELECT` list for data loading from staged files.
 pub struct StageLoadSelectItem {
+    /// Optional alias for the input source.
     pub alias: Option<Ident>,
+    /// Column number within the staged file (1-based).
     pub file_col_num: i32,
+    /// Optional element identifier following the column reference.
     pub element: Option<Ident>,
+    /// Optional alias for the item (AS clause).
     pub item_as: Option<Ident>,
 }
 
 impl fmt::Display for StageParamsObject {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let url = &self.url.as_ref();
-        let storage_integration = &self.storage_integration.as_ref();
-        let endpoint = &self.endpoint.as_ref();
-
-        if url.is_some() {
-            write!(f, " URL='{}'", url.unwrap())?;
+        if let Some(ref url) = self.url {
+            write!(f, " URL='{url}'")?;
         }
-        if storage_integration.is_some() {
-            write!(f, " STORAGE_INTEGRATION={}", storage_integration.unwrap())?;
+        if let Some(ref storage_integration) = self.storage_integration {
+            write!(f, " STORAGE_INTEGRATION={storage_integration}")?;
         }
-        if endpoint.is_some() {
-            write!(f, " ENDPOINT='{}'", endpoint.unwrap())?;
+        if let Some(ref endpoint) = self.endpoint {
+            write!(f, " ENDPOINT='{endpoint}'")?;
         }
         if !self.credentials.options.is_empty() {
             write!(f, " CREDENTIALS=({})", self.credentials)?;
@@ -99,15 +108,15 @@ impl fmt::Display for StageParamsObject {
 
 impl fmt::Display for StageLoadSelectItem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.alias.is_some() {
-            write!(f, "{}.", self.alias.as_ref().unwrap())?;
+        if let Some(alias) = &self.alias {
+            write!(f, "{alias}.")?;
         }
         write!(f, "${}", self.file_col_num)?;
-        if self.element.is_some() {
-            write!(f, ":{}", self.element.as_ref().unwrap())?;
+        if let Some(element) = &self.element {
+            write!(f, ":{element}")?;
         }
-        if self.item_as.is_some() {
-            write!(f, " AS {}", self.item_as.as_ref().unwrap())?;
+        if let Some(item_as) = &self.item_as {
+            write!(f, " AS {item_as}")?;
         }
         Ok(())
     }
@@ -116,9 +125,12 @@ impl fmt::Display for StageLoadSelectItem {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+/// A command to stage files to a named stage.
 pub struct FileStagingCommand {
+    /// The stage to which files are being staged.
     #[cfg_attr(feature = "visitor", visit(with = "visit_relation"))]
     pub stage: ObjectName,
+    /// Optional file matching `PATTERN` expression.
     pub pattern: Option<String>,
 }
 

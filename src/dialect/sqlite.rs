@@ -30,7 +30,8 @@ use crate::parser::{Parser, ParserError};
 /// [`CREATE TABLE`](https://sqlite.org/lang_createtable.html) statement with no
 /// type specified, as in `CREATE TABLE t1 (a)`. In the AST, these columns will
 /// have the data type [`Unspecified`](crate::ast::DataType::Unspecified).
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SQLiteDialect {}
 
 impl Dialect for SQLiteDialect {
@@ -80,15 +81,19 @@ impl Dialect for SQLiteDialect {
         expr: &crate::ast::Expr,
         _precedence: u8,
     ) -> Option<Result<crate::ast::Expr, ParserError>> {
-        // Parse MATCH and REGEXP as operators
+        // Parse MATCH, REGEXP and GLOB as operators
         // See <https://www.sqlite.org/lang_expr.html#the_like_glob_regexp_match_and_extract_operators>
         for (keyword, op) in [
             (Keyword::REGEXP, BinaryOperator::Regexp),
             (Keyword::MATCH, BinaryOperator::Match),
+            (Keyword::GLOB, BinaryOperator::Glob),
         ] {
             if parser.parse_keyword(keyword) {
                 let left = Box::new(expr.clone());
-                let right = Box::new(parser.parse_expr().unwrap());
+                let right = Box::new(match parser.parse_expr() {
+                    Ok(expr) => expr,
+                    Err(e) => return Some(Err(e)),
+                });
                 return Some(Ok(Expr::BinaryOp { left, op, right }));
             }
         }
@@ -114,6 +119,10 @@ impl Dialect for SQLiteDialect {
     /// SQLite supports `NOTNULL` as aliases for `IS NOT NULL`
     /// See: <https://sqlite.org/syntax/expr.html>
     fn supports_notnull_operator(&self) -> bool {
+        true
+    }
+
+    fn supports_comma_separated_trim(&self) -> bool {
         true
     }
 }

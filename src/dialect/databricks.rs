@@ -15,14 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::dialect::{Dialect, Precedence};
-use crate::parser::{Parser, ParserError};
-use crate::tokenizer::Token;
+use crate::dialect::Dialect;
 
 /// A [`Dialect`] for [Databricks SQL](https://www.databricks.com/)
 ///
 /// See <https://docs.databricks.com/en/sql/language-manual/index.html>.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DatabricksDialect;
 
 impl Dialect for DatabricksDialect {
@@ -30,6 +29,11 @@ impl Dialect for DatabricksDialect {
 
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
         matches!(ch, '`')
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-identifiers.html>
+    fn identifier_quote_style(&self, _identifier: &str) -> Option<char> {
+        Some('`')
     }
 
     fn is_identifier_start(&self, ch: char) -> bool {
@@ -40,16 +44,11 @@ impl Dialect for DatabricksDialect {
         matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
     }
 
-    fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
-        let token = parser.peek_token();
-        // : is used for JSON path access
-        match token.token {
-            Token::Colon => Some(Ok(self.prec_value(Precedence::Period))),
-            _ => None,
-        }
+    fn supports_semi_structured_array_all_elements(&self) -> bool {
+        true
     }
 
-    fn supports_semi_structured_array_all_elements(&self) -> bool {
+    fn supports_numeric_prefix(&self) -> bool {
         true
     }
 
@@ -59,6 +58,11 @@ impl Dialect for DatabricksDialect {
 
     // https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-groupby.html
     fn supports_group_by_expr(&self) -> bool {
+        true
+    }
+
+    /// <https://docs.databricks.com/gcp/en/delta/history#delta-time-travel-syntax>
+    fn supports_table_versioning(&self) -> bool {
         true
     }
 
@@ -92,6 +96,30 @@ impl Dialect for DatabricksDialect {
 
     /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-groupby.html>
     fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-values.html>
+    fn supports_values_as_table_factor(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/en/sql/language-manual/delta-optimize.html>
+    fn supports_optimize_table(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/functions/bangsign>
+    fn supports_bang_not_operator(&self) -> bool {
+        true
+    }
+
+    /// See <https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-cte>
+    fn supports_cte_without_as(&self) -> bool {
+        true
+    }
+
+    fn supports_select_item_multi_column_alias(&self) -> bool {
         true
     }
 }
