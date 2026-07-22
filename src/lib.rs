@@ -155,6 +155,8 @@
 #![allow(clippy::large_enum_variant)]
 #![forbid(clippy::unreachable)]
 #![forbid(missing_docs)]
+// TODO: Fix and remove this.
+#![expect(clippy::unnecessary_unwrap)]
 
 // Allow proc-macros to find this crate
 extern crate self as sqlparser;
