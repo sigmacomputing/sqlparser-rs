@@ -1837,14 +1837,12 @@ impl Spanned for JsonPath {
 ///
 /// Missing spans:
 /// - [JsonPathElem::Dot]
-/// - [JsonPathElem::AllElements]
 impl Spanned for JsonPathElem {
     fn span(&self) -> Span {
         match self {
             JsonPathElem::Dot { .. } => Span::empty(),
             JsonPathElem::Bracket { key } => key.span(),
             JsonPathElem::ColonBracket { key } => key.span(),
-            JsonPathElem::AllElements => Span::empty(),
         }
     }
 }

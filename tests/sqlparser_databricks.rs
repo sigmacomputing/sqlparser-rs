@@ -843,7 +843,9 @@ fn parse_semi_structured_data_traversal() {
                         key: "b".to_owned(),
                         quoted: false
                     },
-                    JsonPathElem::AllElements,
+                    JsonPathElem::Bracket {
+                        key: Expr::Wildcard(AttachedToken::empty())
+                    },
                     JsonPathElem::Dot {
                         key: "c".to_owned(),
                         quoted: false

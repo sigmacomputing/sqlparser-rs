@@ -722,11 +722,6 @@ pub enum JsonPathElem {
         /// The expression used as the bracket key (string or numeric expression).
         key: Expr,
     },
-    /// Accesses all elements in the given (generally array) element. Used for
-    /// constructs like `foo:bar[*].baz`.
-    ///
-    /// See <https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-json-path-expression#extract-values-from-arrays>
-    AllElements,
 }
 
 /// A JSON path.
@@ -763,9 +758,6 @@ impl fmt::Display for JsonPath {
                 }
                 JsonPathElem::ColonBracket { key } => {
                     write!(f, ":[{key}]")?;
-                }
-                JsonPathElem::AllElements => {
-                    write!(f, "[*]")?;
                 }
             }
         }
