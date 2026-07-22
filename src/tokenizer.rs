@@ -113,6 +113,8 @@ pub enum Token {
     UnicodeStringLiteral(String),
     /// Hexadecimal string literal: i.e.: X'deadbeef'
     HexStringLiteral(String),
+    /// Interpolated text using Mustache-style syntax, e.g. {{FooBar}}.
+    Mustache(String),
     /// Comma
     Comma,
     /// Whitespace (space, tab, etc)
@@ -314,6 +316,7 @@ impl fmt::Display for Token {
             Token::DoubleQuotedRawStringLiteral(ref s) => write!(f, "R\"{s}\""),
             Token::TripleSingleQuotedRawStringLiteral(ref s) => write!(f, "R'''{s}'''"),
             Token::TripleDoubleQuotedRawStringLiteral(ref s) => write!(f, "R\"\"\"{s}\"\"\""),
+            Token::Mustache(ref s) => write!(f, "{{{s}}}"),
             Token::Comma => f.write_str(","),
             Token::Whitespace(ws) => write!(f, "{ws}"),
             Token::DoubleEq => f.write_str("=="),
@@ -785,6 +788,18 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+pub struct TokenWithRange {
+    pub token: Token,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl TokenWithRange {
+    pub fn new(token: Token, start: usize, end: usize) -> Self {
+        Self { token, start, end }
+    }
+}
+
 /// An error reported by the tokenizer, with a human-readable `message` and a `location`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TokenizerError {
@@ -804,6 +819,7 @@ impl core::error::Error for TokenizerError {}
 
 struct State<'a> {
     peekable: Peekable<Chars<'a>>,
+    pub pos: usize,
     line: u64,
     col: u64,
 }
@@ -814,6 +830,7 @@ impl State<'_> {
         match self.peekable.next() {
             None => None,
             Some(s) => {
+                self.pos += s.len_utf8();
                 if s == '\n' {
                     self.line += 1;
                     self.col = 1;
@@ -940,6 +957,27 @@ impl<'a> Tokenizer<'a> {
         Ok(twl.into_iter().map(|t| t.token).collect())
     }
 
+    pub fn tokenize_with_range(&mut self) -> Result<Vec<TokenWithRange>, TokenizerError> {
+        let mut tokens = Vec::<TokenWithRange>::new();
+        let mut state = State {
+            peekable: self.query.chars().peekable(),
+            line: 1,
+            col: 1,
+            pos: 0,
+        };
+
+        let mut start = state.pos;
+        while let Some(token) = self.next_token(&mut state, tokens.last().map(|t| &t.token))? {
+            tokens.push(TokenWithRange {
+                token,
+                start,
+                end: state.pos,
+            });
+            start = state.pos;
+        }
+        Ok(tokens)
+    }
+
     /// Tokenize the statement and produce a vector of tokens with location information
     pub fn tokenize_with_location(&mut self) -> Result<Vec<TokenWithSpan>, TokenizerError> {
         let mut tokens: Vec<TokenWithSpan> = vec![];
@@ -967,6 +1005,7 @@ impl<'a> Tokenizer<'a> {
             peekable: self.query.chars().peekable(),
             line: 1,
             col: 1,
+            pos: 0,
         };
 
         let mut location = state.location();
@@ -1052,6 +1091,7 @@ impl<'a> Tokenizer<'a> {
                 peekable: word.chars().peekable(),
                 line: 0,
                 col: 0,
+                pos: 0,
             };
             let mut s = peeking_take_while(&mut inner_state, |ch| matches!(ch, '0'..='9' | '.'));
             let s2 = peeking_take_while(chars, |ch| matches!(ch, '0'..='9' | '.'));
@@ -1349,7 +1389,7 @@ impl<'a> Tokenizer<'a> {
                     // if the prev token is not a word, then this is not a valid sql
                     // word or number.
                     if ch == '.' && chars.peekable.clone().nth(1) == Some('_') {
-                        if let Some(Token::Word(_)) = prev_token {
+                        if let Some(Token::Word(_) | Token::Mustache(_)) = prev_token {
                             chars.next();
                             return Ok(Some(Token::Period));
                         }
@@ -1724,7 +1764,45 @@ impl<'a> Tokenizer<'a> {
                         _ => Ok(Some(Token::Caret)),
                     }
                 }
-                '{' => self.consume_and_return(chars, Token::LBrace),
+                '{' => {
+                    chars.next(); // consume the '{'
+                    if let Some('{') = chars.peek() {
+                        chars.next(); // consume the second '{'
+
+                        let mut s = String::new();
+                        let mut is_terminated = false;
+                        let mut prev: Option<char> = None;
+
+                        while let Some(&ch) = chars.peek() {
+                            if prev == Some('}') {
+                                if ch == '}' {
+                                    chars.next();
+                                    is_terminated = true;
+                                    break;
+                                } else {
+                                    s.push('}');
+                                    s.push(ch);
+                                }
+                            } else if ch != '}' {
+                                s.push(ch);
+                            }
+
+                            prev = Some(ch);
+                            chars.next();
+                        }
+
+                        if chars.peek().is_none() && !is_terminated {
+                            self.tokenizer_error(
+                                chars.location(),
+                                "Unterminated mustache interpolation",
+                            )
+                        } else {
+                            Ok(Some(Token::Mustache(s)))
+                        }
+                    } else {
+                        Ok(Some(Token::LBrace))
+                    }
+                }
                 '}' => self.consume_and_return(chars, Token::RBrace),
                 '#' if dialect_of!(self is SnowflakeDialect | BigQueryDialect | MySqlDialect | HiveDialect) =>
                 {
@@ -3755,6 +3833,7 @@ mod tests {
             peekable: s.chars().peekable(),
             line: 0,
             col: 0,
+            pos: 0,
         };
 
         assert_eq!(
@@ -4523,6 +4602,20 @@ mod tests {
                 Token::Lt,
                 Token::Plus,
                 Token::make_word("b", None),
+            ],
+        );
+    }
+
+    #[test]
+    fn tokenize_mustache_dot_ident() {
+        all_dialects_where(|d| d.is_identifier_start('_')).tokenizes_to(
+            "SELECT {{schema}}._column",
+            vec![
+                Token::make_keyword("SELECT"),
+                Token::Whitespace(Whitespace::Space),
+                Token::Mustache("schema".to_owned()),
+                Token::Period,
+                Token::make_word("_column", None),
             ],
         );
     }
