@@ -4348,7 +4348,6 @@ impl<'a> Parser<'a> {
     // Parser is either looking at a : or a bracket expression.
     fn parse_json_path(&mut self) -> Result<JsonPath, ParserError> {
         let mut path = Vec::new();
-        let mut has_colon = false;
         loop {
             match self.next_token().token {
                 Token::Colon if path.is_empty() && self.peek_token_ref() == &Token::LBracket => {
@@ -4358,12 +4357,7 @@ impl<'a> Parser<'a> {
                     path.push(JsonPathElem::ColonBracket { key });
                 }
                 Token::Colon if path.is_empty() => {
-                    has_colon = true;
-                    if *self.peek_token_ref() == Token::LBracket {
-                        path.push(self.parse_json_path_bracket_element()?);
-                    } else {
-                        path.push(self.parse_json_path_object_key()?);
-                    }
+                    path.push(self.parse_json_path_object_key()?);
                 }
                 Token::Period if !path.is_empty() => {
                     path.push(self.parse_json_path_object_key()?);
@@ -4382,23 +4376,7 @@ impl<'a> Parser<'a> {
         }
 
         debug_assert!(!path.is_empty());
-        Ok(JsonPath { has_colon, path })
-    }
-
-    /// Parses a single bracketed element in a JSON path expression, including both brackets.
-    fn parse_json_path_bracket_element(&mut self) -> Result<JsonPathElem, ParserError> {
-        self.expect_token(&Token::LBracket)?;
-        let elem = if *self.peek_token_ref() == Token::Mul
-            && self.dialect.supports_semi_structured_array_all_elements()
-        {
-            self.expect_token(&Token::Mul)?;
-            JsonPathElem::AllElements
-        } else {
-            let key = self.parse_expr()?;
-            JsonPathElem::Bracket { key }
-        };
-        self.expect_token(&Token::RBracket)?;
-        Ok(elem)
+        Ok(JsonPath { path })
     }
 
     /// Parses the parens following the `[ NOT ] IN` operator.

@@ -738,22 +738,17 @@ pub enum JsonPathElem {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct JsonPath {
     /// Sequence of path elements that form the JSON path.
-    /// True if the path should start with a colon. Some dialects (e.g. Snowflake) allow
-    /// `a['b']`, whereas others (e.g. Databricks) require the colon even in this case
-    /// (so `a:['b']`).
-    pub has_colon: bool,
     pub path: Vec<JsonPathElem>,
 }
 
 impl fmt::Display for JsonPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.has_colon {
-            write!(f, ":")?;
-        }
         for (i, elem) in self.path.iter().enumerate() {
             match elem {
                 JsonPathElem::Dot { key, quoted } => {
-                    if i != 0 {
+                    if i == 0 {
+                        write!(f, ":")?;
+                    } else {
                         write!(f, ".")?;
                     }
 

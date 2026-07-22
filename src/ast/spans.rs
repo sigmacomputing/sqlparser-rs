@@ -1829,9 +1829,7 @@ impl Spanned for FunctionArgumentClause {
 /// see Spanned impl for JsonPathElem for more information
 impl Spanned for JsonPath {
     fn span(&self) -> Span {
-        let JsonPath { path, has_colon: _ } = self;
-
-        union_spans(path.iter().map(|i| i.span()))
+        union_spans(self.path.iter().map(|i| i.span()))
     }
 }
 

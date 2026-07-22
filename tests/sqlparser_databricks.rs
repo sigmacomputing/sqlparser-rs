@@ -771,7 +771,6 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
-                has_colon: true,
                 path: vec![
                     JsonPathElem::Dot {
                         key: "b".to_owned(),
@@ -794,7 +793,6 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
-                has_colon: true,
                 path: vec![
                     JsonPathElem::Dot {
                         key: "b".to_owned(),
@@ -819,9 +817,8 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
-                has_colon: true,
                 path: vec![
-                    JsonPathElem::Bracket {
+                    JsonPathElem::ColonBracket {
                         key: Expr::value(Value::SingleQuotedString("b".to_owned())),
                     },
                     JsonPathElem::Dot {
@@ -841,7 +838,6 @@ fn parse_semi_structured_data_traversal() {
         SelectItem::UnnamedExpr(Expr::JsonAccess {
             value: Box::new(Expr::Identifier(Ident::new("a"))),
             path: JsonPath {
-                has_colon: true,
                 path: vec![
                     JsonPathElem::Dot {
                         key: "b".to_owned(),
