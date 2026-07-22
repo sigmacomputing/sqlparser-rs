@@ -15,9 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::dialect::{Dialect, Precedence};
-use crate::parser::{Parser, ParserError};
-use crate::tokenizer::Token;
+use crate::dialect::Dialect;
 
 /// A [`Dialect`] for [Databricks SQL](https://www.databricks.com/)
 ///
@@ -44,19 +42,6 @@ impl Dialect for DatabricksDialect {
 
     fn is_identifier_part(&self, ch: char) -> bool {
         matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
-    }
-
-    fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
-        let token = parser.peek_token();
-        // : is used for JSON path access
-        match token.token {
-            Token::Colon => Some(Ok(self.prec_value(Precedence::Period))),
-            _ => None,
-        }
-    }
-
-    fn supports_semi_structured_array_all_elements(&self) -> bool {
-        true
     }
 
     fn supports_numeric_prefix(&self) -> bool {

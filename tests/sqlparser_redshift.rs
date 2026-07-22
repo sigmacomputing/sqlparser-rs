@@ -206,7 +206,6 @@ fn test_redshift_json_path() {
                 Ident::new("c_orders")
             ])),
             path: JsonPath {
-                has_colon: false,
                 path: vec![
                     JsonPathElem::Bracket {
                         key: Expr::value(number("0"))
@@ -230,7 +229,6 @@ fn test_redshift_json_path() {
                 Ident::new("c_orders")
             ])),
             path: JsonPath {
-                has_colon: false,
                 path: vec![
                     JsonPathElem::Bracket {
                         key: Expr::value(number("0"))
@@ -257,7 +255,6 @@ fn test_redshift_json_path() {
                 Ident::new("col1")
             ])),
             path: JsonPath {
-                has_colon: false,
                 path: vec![
                     JsonPathElem::Bracket {
                         key: Expr::value(number("0"))
@@ -284,7 +281,6 @@ fn test_redshift_json_path() {
                 Ident::new("col1")
             ])),
             path: JsonPath {
-                has_colon: false,
                 path: vec![
                     JsonPathElem::Bracket {
                         key: Expr::value(number("0"))
@@ -312,7 +308,6 @@ fn test_parse_json_path_from() {
             assert_eq!(
                 json_path,
                 &Some(JsonPath {
-                    has_colon: false,
                     path: vec![
                         JsonPathElem::Bracket {
                             key: Expr::value(number("0"))
@@ -337,7 +332,6 @@ fn test_parse_json_path_from() {
             assert_eq!(
                 json_path,
                 &Some(JsonPath {
-                    has_colon: false,
                     path: vec![
                         JsonPathElem::Bracket {
                             key: Expr::value(number("0"))
