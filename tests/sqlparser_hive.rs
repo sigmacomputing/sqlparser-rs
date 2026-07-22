@@ -23,7 +23,8 @@
 use sqlparser::ast::{
     ClusteredBy, CommentDef, CreateFunction, CreateFunctionBody, CreateFunctionUsing, CreateTable,
     Expr, Function, FunctionArgumentList, FunctionArguments, Ident, ObjectName, OrderByExpr,
-    OrderByOptions, SelectItem, Set, Statement, TableFactor, UnaryOperator, Use, Value,
+    OrderByOptions, OrderBySort, SelectItem, Set, Statement, TableFactor, UnaryOperator, Use,
+    Value,
 };
 use sqlparser::dialect::{AnsiDialect, GenericDialect, HiveDialect};
 use sqlparser::parser::ParserError;
@@ -34,10 +35,12 @@ fn parse_table_create() {
     let sql = r#"CREATE TABLE IF NOT EXISTS db.table (a BIGINT, b STRING, c TIMESTAMP) PARTITIONED BY (d STRING, e TIMESTAMP) STORED AS ORC LOCATION 's3://...' TBLPROPERTIES ("prop" = "2", "asdf" = '1234', 'asdf' = "1234", "asdf" = 2)"#;
     let iof = r#"CREATE TABLE IF NOT EXISTS db.table (a BIGINT, b STRING, c TIMESTAMP) PARTITIONED BY (d STRING, e TIMESTAMP) STORED AS INPUTFORMAT 'org.apache.hadoop.hive.ql.io.orc.OrcInputFormat' OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat' LOCATION 's3://...'"#;
     let serdeproperties = r#"CREATE EXTERNAL TABLE IF NOT EXISTS db.table (a STRING, b STRING, c STRING) PARTITIONED BY (d STRING, e STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde.config' WITH SERDEPROPERTIES ('prop_a' = 'a', 'prop_b' = 'b') STORED AS TEXTFILE LOCATION 's3://...' TBLPROPERTIES ('prop_c' = 'c')"#;
+    let externaltable = r#"CREATE EXTERNAL TABLE t (c INT)"#;
 
     hive().verified_stmt(sql);
     hive().verified_stmt(iof);
     hive().verified_stmt(serdeproperties);
+    hive().verified_stmt(externaltable);
 }
 
 #[test]
@@ -169,7 +172,7 @@ fn create_table_with_clustered_by() {
                         OrderByExpr {
                             expr: Expr::Identifier(Ident::new("a")),
                             options: OrderByOptions {
-                                asc: Some(true),
+                                sort: Some(OrderBySort::Asc),
                                 nulls_first: None,
                             },
                             with_fill: None,
@@ -177,7 +180,7 @@ fn create_table_with_clustered_by() {
                         OrderByExpr {
                             expr: Expr::Identifier(Ident::new("b")),
                             options: OrderByOptions {
-                                asc: Some(false),
+                                sort: Some(OrderBySort::Desc),
                                 nulls_first: None,
                             },
                             with_fill: None,
@@ -557,6 +560,13 @@ fn test_tample_sample() {
     hive().verified_stmt("SELECT * FROM source TABLESAMPLE (100M) AS s");
     hive().verified_stmt("SELECT * FROM source TABLESAMPLE (0.1 PERCENT) AS s");
     hive().verified_stmt("SELECT * FROM source TABLESAMPLE (10 ROWS)");
+}
+
+#[test]
+fn parse_create_table_with_map_column_comment() {
+    hive().verified_stmt(
+        "CREATE TABLE target (kv_map MAP<STRING, STRING> COMMENT 'kv col comment') COMMENT 'this is table comment'",
+    );
 }
 
 fn hive() -> TestedDialects {

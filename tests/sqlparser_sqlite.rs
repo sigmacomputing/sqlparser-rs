@@ -477,6 +477,7 @@ fn parse_update_tuple_row_values() {
     assert_eq!(
         sqlite().verified_stmt("UPDATE x SET (a, b) = (1, 2)"),
         Statement::Update(Update {
+            optimizer_hints: vec![],
             or: None,
             assignments: vec![Assignment {
                 target: AssignmentTarget::Tuple(vec![
@@ -495,6 +496,8 @@ fn parse_update_tuple_row_values() {
             },
             from: None,
             returning: None,
+            output: None,
+            order_by: vec![],
             limit: None,
             update_token: AttachedToken::empty()
         })
@@ -601,6 +604,28 @@ fn test_regexp_operator() {
         }
     );
     sqlite().verified_only_select(r#"SELECT count(*) FROM messages WHERE msg_text REGEXP '\d+'"#);
+
+    // Should return an error, not panic
+    assert!(sqlite().parse_sql_statements("SELECT 1 REGEXP").is_err());
+    assert!(sqlite().parse_sql_statements("SELECT 1 MATCH").is_err());
+}
+
+#[test]
+fn test_glob_operator() {
+    assert_eq!(
+        sqlite().verified_expr("col GLOB 'pattern'"),
+        Expr::BinaryOp {
+            op: BinaryOperator::Glob,
+            left: Box::new(Expr::Identifier(Ident::new("col"))),
+            right: Box::new(Expr::Value(
+                (Value::SingleQuotedString("pattern".to_string())).with_empty_span()
+            ))
+        }
+    );
+    sqlite().verified_only_select(r#"SELECT count(*) FROM files WHERE name GLOB '*.txt'"#);
+
+    // Should return an error, not panic
+    assert!(sqlite().parse_sql_statements("SELECT 1 GLOB").is_err());
 }
 
 #[test]

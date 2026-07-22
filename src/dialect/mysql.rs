@@ -35,7 +35,8 @@ const RESERVED_FOR_TABLE_ALIAS_MYSQL: &[Keyword] = &[
 ];
 
 /// A [`Dialect`] for [MySQL](https://www.mysql.com/)
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MySqlDialect {}
 
 impl Dialect for MySqlDialect {
@@ -84,6 +85,15 @@ impl Dialect for MySqlDialect {
         true
     }
 
+    fn supports_bitwise_shift_operators(&self) -> bool {
+        true
+    }
+
+    /// see <https://dev.mysql.com/doc/refman/8.4/en/comments.html>
+    fn supports_multiline_comment_hints(&self) -> bool {
+        true
+    }
+
     fn parse_infix(
         &self,
         parser: &mut crate::parser::Parser,
@@ -92,10 +102,15 @@ impl Dialect for MySqlDialect {
     ) -> Option<Result<crate::ast::Expr, ParserError>> {
         // Parse DIV as an operator
         if parser.parse_keyword(Keyword::DIV) {
+            let left = Box::new(expr.clone());
+            let right = Box::new(match parser.parse_expr() {
+                Ok(expr) => expr,
+                Err(e) => return Some(Err(e)),
+            });
             Some(Ok(Expr::BinaryOp {
-                left: Box::new(expr.clone()),
+                left,
                 op: BinaryOperator::MyIntegerDivide,
-                right: Box::new(parser.parse_expr().unwrap()),
+                right,
             }))
         } else {
             None
@@ -152,11 +167,20 @@ impl Dialect for MySqlDialect {
         true
     }
 
+    fn supports_select_modifiers(&self) -> bool {
+        true
+    }
+
     fn supports_set_names(&self) -> bool {
         true
     }
 
     fn supports_comma_separated_set_assignments(&self) -> bool {
+        true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/update.html>
+    fn supports_update_order_by(&self) -> bool {
         true
     }
 
@@ -166,6 +190,40 @@ impl Dialect for MySqlDialect {
 
     fn supports_cross_join_constraint(&self) -> bool {
         true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/expressions.html>
+    fn supports_double_ampersand_operator(&self) -> bool {
+        true
+    }
+
+    /// Deprecated functionality by MySQL but still supported
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/cast-functions.html#operator_binary>
+    fn supports_binary_kw_as_cast(&self) -> bool {
+        true
+    }
+
+    fn supports_comment_optimizer_hint(&self) -> bool {
+        true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/create-table.html>
+    fn supports_constraint_keyword_without_name(&self) -> bool {
+        true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/create-table.html>
+    fn supports_key_column_option(&self) -> bool {
+        true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/9.7/en/group-by-modifiers.html>
+    fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+
+    fn supports_left_associative_joins_without_parens(&self) -> bool {
+        false
     }
 }
 
@@ -205,7 +263,7 @@ fn parse_lock_tables_type(parser: &mut Parser) -> Result<LockTableType, ParserEr
     } else if parser.parse_keywords(&[Keyword::LOW_PRIORITY, Keyword::WRITE]) {
         Ok(LockTableType::Write { low_priority: true })
     } else {
-        parser.expected("an lock type in LOCK TABLES", parser.peek_token())
+        parser.expected_ref("an lock type in LOCK TABLES", parser.peek_token_ref())
     }
 }
 
