@@ -788,13 +788,18 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+/// A token and its byte range in the original SQL text.
 pub struct TokenWithRange {
+    /// Parsed token.
     pub token: Token,
+    /// Inclusive byte offset where the token starts.
     pub start: usize,
+    /// Exclusive byte offset where the token ends.
     pub end: usize,
 }
 
 impl TokenWithRange {
+    /// Create a token with its inclusive start and exclusive end byte offsets.
     pub fn new(token: Token, start: usize, end: usize) -> Self {
         Self { token, start, end }
     }
@@ -957,6 +962,7 @@ impl<'a> Tokenizer<'a> {
         Ok(twl.into_iter().map(|t| t.token).collect())
     }
 
+    /// Tokenize the statement and return each token with its source byte range.
     pub fn tokenize_with_range(&mut self) -> Result<Vec<TokenWithRange>, TokenizerError> {
         let mut tokens = Vec::<TokenWithRange>::new();
         let mut state = State {

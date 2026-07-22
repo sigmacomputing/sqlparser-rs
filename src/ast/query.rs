@@ -1509,7 +1509,9 @@ pub enum TableFactor {
     /// A pass-through query string that is not parsed.
     /// This is useful while building/rewriting queries with a known valid SQL string and to avoid parsing it.
     PassThroughQuery {
+        /// Query text to emit without parsing.
         query: String,
+        /// Optional alias for the pass-through query.
         alias: Option<TableAlias>,
     },
     /// `TABLE(<expr>)[ AS <alias> ]`

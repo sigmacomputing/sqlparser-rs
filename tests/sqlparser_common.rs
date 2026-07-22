@@ -16018,6 +16018,7 @@ fn ast_with_pass_through_query() {
             explicit: false,
             name: Ident::new("ty"),
             columns: vec![],
+            at: None,
         }),
     };
 
@@ -16042,6 +16043,7 @@ fn ast_with_pass_through_query_with_explicit_alias() {
             explicit: true,
             name: Ident::new("ty"),
             columns: vec![],
+            at: None,
         }),
     };
 
